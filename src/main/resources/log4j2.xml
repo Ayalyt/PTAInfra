@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="TRACE" monitorInterval="30">
+    <!--
+        status: Log4j2 内部日志级别，用于监控 Log4j2 自身的状态。
+                TRACE, DEBUG, INFO, WARN, ERROR, FATAL, OFF
+        monitorInterval: 检查配置文件修改的间隔时间（秒），热加载。
+    -->
+    <Properties>
+        <!-- 日志文件存放目录 -->
+        <Property name="LOG_DIR">logs</Property>
+
+        <!-- 控制台日志输出格式 -->
+        <Property name="PATTERN_CONSOLE">[%d{HH:mm:ss.SSS}] %highlight{%-5p} %style{%c{1.}}{cyan} - %msg%n%throwable</Property>
+
+        <!-- 文件日志输出格式 -->
+        <Property name="PATTERN_FILE">[%d{yyyy-MM-dd HH:mm:ss.SSS}] [%t] %-5p %c{3.} - %msg%n%throwable</Property>
+
+        <!-- 错误日志输出格式 -->
+        <Property name="PATTERN_ERROR_FILE">[%d{yyyy-MM-dd HH:mm:ss.SSS}] [%t] %-5p %c{3.} - %msg%n%throwable</Property>
+    </Properties>
+
+    <Appenders>
+        <!-- 控制台输出 -->
+        <Console name="ConsoleAppender" target="SYSTEM_OUT">
+            <PatternLayout pattern="${PATTERN_CONSOLE}"/>
+        </Console>
+
+        <!-- 主日志文件输出 -->
+        <RollingFile name="FileAppender"
+                     fileName="${LOG_DIR}/pta-infra.log"
+                     filePattern="${LOG_DIR}/pta-infra-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${PATTERN_FILE}"/>
+            <Policies>
+                <!-- 每天滚动一次 -->
+                <TimeBasedTriggeringPolicy/>
+                <SizeBasedTriggeringPolicy size="10MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="10"/>
+        </RollingFile>
+
+        <!-- 错误日志文件输出 (只记录 ERROR 及以上级别) -->
+        <RollingFile name="ErrorFileAppender"
+                     fileName="${LOG_DIR}/pta-infra-error.log"
+                     filePattern="${LOG_DIR}/pta-infra-error-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${PATTERN_ERROR_FILE}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy/>
+                <SizeBasedTriggeringPolicy size="5MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="5"/>
+            <!-- 过滤器：只允许 ERROR 及以上级别的日志通过 -->
+            <Filters>
+                <ThresholdFilter level="ERROR" onMatch="ACCEPT" onMismatch="DENY"/>
+            </Filters>
+        </RollingFile>
+
+        <!-- 异步日志 Appender -->
+        <Async name="AsyncFileAppender">
+            <AppenderRef ref="FileAppender"/>
+            <AppenderRef ref="ErrorFileAppender"/>
+            <!-- 队列大小 -->
+            <QueueSize>2048</QueueSize>
+            <!-- 如果队列满，是否阻塞调用线程。true 阻塞，false 丢弃日志。关键日志设为 true。 -->
+            <Blocking>true</Blocking>
+        </Async>
+
+    </Appenders>
+
+    <Loggers>
+        <!--
+            additivity="false"：防止日志事件传递给父级 Logger，避免重复输出。
+        -->
+
+        <!-- 自动机基础结构 -->
+        <Logger name="org.example.automata.base" level="DEBUG" additivity="false">
+            <AppenderRef ref="ConsoleAppender"/>
+            <AppenderRef ref="AsyncFileAppender"/>
+        </Logger>
+
+        <!-- 自动机模型 -->
+        <Logger name="org.example.automata.models" level="DEBUG" additivity="false">
+            <AppenderRef ref="ConsoleAppender"/>
+            <AppenderRef ref="AsyncFileAppender"/>
+        </Logger>
+
+        <!-- 差分约束表示 -->
+        <Logger name="org.example.expressions.dcs" level="DEBUG" additivity="false">
+            <AppenderRef ref="ConsoleAppender"/>
+            <AppenderRef ref="AsyncFileAppender"/>
+        </Logger>
+
+        <!-- 参数不等式表示 -->
+        <Logger name="org.example.expressions.parameters" level="DEBUG" additivity="false">
+            <AppenderRef ref="ConsoleAppender"/>
+            <AppenderRef ref="AsyncFileAppender"/>
+        </Logger>
+
+        <!-- 核心结构表示 -->
+        <Logger name="org.example.core" level="DEBUG" additivity="false">
+            <AppenderRef ref="ConsoleAppender"/>
+            <AppenderRef ref="AsyncFileAppender"/>
+        </Logger>
+
+        <!-- 工具类/通用模块 -->
+        <Logger name="org.example.utils" level="DEBUG" additivity="false">
+            <AppenderRef ref="ConsoleAppender"/>
+            <AppenderRef ref="AsyncFileAppender"/>
+        </Logger>
+
+        <!-- 第三方库的日志级别控制 -->
+        <!-- z3 -->
+        <Logger name="com.microsoft" level="INFO" additivity="false">
+            <AppenderRef ref="ConsoleAppender"/>
+            <AppenderRef ref="AsyncFileAppender"/>
+        </Logger>
+
+        <!-- 根 Logger：所有未被特定 Logger 匹配的日志 -->
+        <!-- 生产环境 INFO，开发环境 DEBUG -->
+        <Root level="DEBUG">
+            <AppenderRef ref="ConsoleAppender"/>
+            <AppenderRef ref="AsyncFileAppender"/>
+        </Root>
+    </Loggers>
+
+</Configuration>
