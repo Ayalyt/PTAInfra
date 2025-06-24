@@ -105,7 +105,7 @@ public final class AtomicGuard implements Comparable<AtomicGuard>, ToZ3BoolExpr 
      * @return 取反后的新 AtomicGuard。
      */
     public AtomicGuard negate() {
-        // 注意：这里是对整个不等式进行逻辑否定，不涉及操作数交换
+        // 这里是对整个不等式进行逻辑否定，不涉及操作数交换
         return new AtomicGuard(this.clock1, this.clock2, this.bound, this.relation.negate());
     }
 
@@ -114,7 +114,7 @@ public final class AtomicGuard implements Comparable<AtomicGuard>, ToZ3BoolExpr 
     public BoolExpr toZ3BoolExpr(Context ctx, Z3VariableManager varManager) {
         ArithExpr z3Clock1 = varManager.getZ3Var(clock1);
         ArithExpr z3Clock2 = varManager.getZ3Var(clock2);
-        ArithExpr z3Bound = bound.toZ3ArithExpr(ctx, varManager); // 调用 LinearExpression 的 Z3 转换方法
+        ArithExpr z3Bound = bound.toZ3ArithExpr(ctx, varManager);
 
         ArithExpr diffZ3 = ctx.mkSub(z3Clock1, z3Clock2);
 
@@ -136,7 +136,7 @@ public final class AtomicGuard implements Comparable<AtomicGuard>, ToZ3BoolExpr 
             return false;
         }
         AtomicGuard that = (AtomicGuard) o;
-        // 由于构造函数已规范化，直接比较字段即可
+        // 构造函数已规范化，直接比较字段即可
         return relation == that.relation &&
                 clock1.equals(that.clock1) &&
                 clock2.equals(that.clock2) &&

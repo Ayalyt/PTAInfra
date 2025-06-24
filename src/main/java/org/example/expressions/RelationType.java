@@ -60,6 +60,13 @@ public enum RelationType {
         };
     }
 
+    public boolean isGreater() {
+        return switch (this) {
+            case GE, GT -> true;
+            case LE, LT -> false;
+        };
+    }
+
     /**
      * 组合两个关系类型，返回更严格的关系。
      * 例如：LT.and(LE) 返回 LT。

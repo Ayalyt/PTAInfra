@@ -24,7 +24,7 @@ public final class ConstraintSet implements Comparable<ConstraintSet>, ToZ3BoolE
     // 内部存储 ParameterConstraint 的有序集合，确保规范化和比较的一致性
     private final SortedSet<ParameterConstraint> constraints;
 
-    // 预定义常量：表示恒真（空约束集）和恒假（矛盾约束集）
+    // 预定义常量：表示恒真的空约束集
     public static final ConstraintSet TRUE_CONSTRAINT_SET = new ConstraintSet(Collections.emptySet());
     // FALSE_CONSTRAINT_SET 不好定义。目前的方案是尽可能避免直接需求恒假量的情况，一切交由Oracle判断
     private final int hashCode;

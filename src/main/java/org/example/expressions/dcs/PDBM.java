@@ -3,6 +3,7 @@ package org.example.expressions.dcs;
 import com.microsoft.z3.BoolExpr;
 import com.microsoft.z3.Context;
 import lombok.Getter;
+import org.apache.commons.lang3.tuple.Pair;
 import org.example.automata.base.ResetSet;
 import org.example.core.Clock;
 import org.example.expressions.RelationType;
@@ -168,27 +169,25 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
         logger.debug("PDBM.addGuard: 尝试添加新约束 {} 到 PDBM {} under C {}", newGuard, this, currentConstraintSet);
         List<Map.Entry<ConstraintSet, PDBM>> resultPairs = new ArrayList<>();
 
-        // 1. 获取新约束对应的矩阵索引
-        Integer i = clockIndexMap.get(newGuard.getClock1());
-        Integer j = clockIndexMap.get(newGuard.getClock2());
-        if (i == null || j == null) {
+
+        // 1. 时钟合法性检查
+        if (!clockList.contains(newGuard.getClock1()) && !clockList.contains(newGuard.getClock2())) {
             logger.warn("PDBM.addGuard: 约束 {} 中的时钟未在 PDBM 中找到，忽略此约束。", newGuard);
             // 如果时钟不在 PDBM 中，则此守卫不影响当前 PDBM，返回原始 (C, D) 对
             resultPairs.add(Map.entry(currentConstraintSet, this));
             return resultPairs;
         }
 
-        AtomicGuard currentGuard = boundsMatrix[i][j];
+        Integer i, j;
+        Pair<Integer, Integer>  positioning = positioning(newGuard);
+        i = positioning.getLeft();
+        j = positioning.getRight();
 
         // 2. 构造 C(D, f) 约束：e_ij (rel_ij AND rel_new) e_new
         // 转换为 ParameterConstraint 形式：(e_ij - e_new) (rel_ij AND rel_new) 0
-        ParameterConstraint comparisonConstraint = ParameterConstraint.of(
-                currentGuard.getBound(),
-                newGuard.getBound(),
-                currentGuard.getRelation().and(newGuard.getRelation())
-        );
+        ParameterConstraint comparisonConstraint = createComparisonConstraint(newGuard, i, j);
 
-        // 3. 使用 Z3 Oracle 检查覆盖关系
+        // 3. Oracle 检查覆盖关系
         Z3Oracle.OracleResult oracleResult = oracle.checkCoverage(comparisonConstraint, currentConstraintSet);
         logger.debug("PDBM.addGuard: Oracle 结果 for C(D,f) {} on C {} is {}", comparisonConstraint, currentConstraintSet, oracleResult);
 
@@ -229,6 +228,56 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
         }
         logger.debug("PDBM.addGuard: 返回 {} 个 (ConstraintSet, PDBM) 对。", resultPairs.size());
         return resultPairs;
+    }
+
+    /**
+     * 根据newGuard的符号方向确认旧约束在上三角或下三角
+     * @param newGuard
+     * @return
+     */
+    private Pair<Integer, Integer> positioning (AtomicGuard newGuard){
+        Integer i = 0;
+        Integer j = 0;
+        boolean isGreater = newGuard.getRelation().isGreater();
+        if (isGreater){
+            i = clockIndexMap.get(newGuard.getClock2());
+            j = clockIndexMap.get(newGuard.getClock1());
+        } else {
+            i = clockIndexMap.get(newGuard.getClock1());
+            j = clockIndexMap.get(newGuard.getClock2());
+        }
+        return Pair.of(i, j);
+    }
+
+    /**
+     * 辅助方法：根据两个 AtomicGuard 构造一个 ParameterConstraint 用于比较。
+     * 论文中 C(D, f) = e_ij (<ij ⇒ <) e
+     * 这里的 AtomicGuard 实例都应是规范化的上界形式 (LT 或 LE)。
+     *
+     * @param newGuard 要添加的 AtomicGuard (c_i - c_j ~ E_new)
+     * @return 比较这两个 AtomicGuard 边界的 ParameterConstraint。
+     */
+    private ParameterConstraint createComparisonConstraint(AtomicGuard newGuard, Integer i, Integer j) {
+        AtomicGuard currentGuard = boundsMatrix[i][j];
+
+        RelationType finalRelation;
+        if (newGuard.getRelation() == RelationType.LT || currentGuard.getRelation() == RelationType.LT) {
+            finalRelation = RelationType.LT;
+        } else if (newGuard.getRelation() == RelationType.GT || currentGuard.getRelation() == RelationType.GT) {
+            finalRelation = RelationType.GT;
+        } else if (i <= j) {
+            finalRelation = RelationType.LE;
+        } else {
+            finalRelation = RelationType.GE;
+        }
+
+        // 构造 ParameterConstraint: (currentBound - newBound) finalRelation 0
+        // TODO: 检查一下bound构造方向对于后续的影响如何
+        return ParameterConstraint.of(
+                i <= j ? currentGuard.getBound().subtract(newGuard.getBound()) : newGuard.getBound().subtract(currentGuard.getBound()),
+                LinearExpression.of(Rational.ZERO),
+                finalRelation
+        );
     }
 
     /**
@@ -516,11 +565,9 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
             return false;
         }
         PDBM pdbm = (PDBM) o;
-        // 比较时钟列表和矩阵内容
         if (!clockList.equals(pdbm.clockList)) {
             return false;
         }
-        // Arrays.deepEquals 用于比较二维数组的内容
         return Arrays.deepEquals(boundsMatrix, pdbm.boundsMatrix);
     }
 
@@ -536,7 +583,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
         for (Clock clock : clockList) {
             maxClockNameWidth = Math.max(maxClockNameWidth, clock.getName().length());
         }
-        int elementWidth = 20; // 调整宽度以适应 LinearExpression
+        int elementWidth = 20; // 适应 LinearExpression
 
         // 列标题 时钟名
         sb.append(String.format("%" + maxClockNameWidth + "s |", ""));

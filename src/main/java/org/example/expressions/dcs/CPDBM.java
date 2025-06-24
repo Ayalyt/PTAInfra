@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 /**
  * 代表受约束的参数化差分界限矩阵 (Constrained Parametric Difference-Bound Matrix, CPDBM)。
  * CPDBM 是一个对 (C, D)，其中 C 是参数约束集合，D 是 PDBM。
- * 此类是不可变的。
+ * 不可变。
  */
 @Getter
 public final class CPDBM implements Comparable<CPDBM> {
