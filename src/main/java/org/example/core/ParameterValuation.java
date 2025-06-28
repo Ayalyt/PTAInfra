@@ -25,7 +25,7 @@ public final class ParameterValuation implements Comparable<ParameterValuation>{
      * @param parameterValuation 包含参数及其值的 Map。
      */
     private ParameterValuation(Map<Parameter, Rational> parameterValuation) {
-        logger.debug("创建 ParameterValuation: {}", parameterValuation);
+        logger.info("创建 ParameterValuation: {}", parameterValuation);
         this.parameterValuation = Collections.unmodifiableSortedMap(new TreeMap<>(parameterValuation));
     }
 
@@ -50,7 +50,7 @@ public final class ParameterValuation implements Comparable<ParameterValuation>{
         for (Parameter para : paras) {
             zeroValues.put(para, Rational.ZERO);
         }
-        logger.debug("对于参数列表{}创建零ParameterValuation", paras);
+        logger.info("对于参数列表{}创建零ParameterValuation", paras);
         return new ParameterValuation(zeroValues);
     }
 

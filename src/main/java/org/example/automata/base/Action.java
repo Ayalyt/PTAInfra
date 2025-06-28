@@ -35,7 +35,7 @@ public final class Action implements Comparable<Action> {
         this.isEpsilon = label.isEmpty();
         this.id = NEXT_ID.getAndIncrement();
         this.hashCode = Objects.hash(label);
-        logger.debug("创建 Action: {}", label);
+        logger.info("创建 Action: {}", label);
     }
 
     /**

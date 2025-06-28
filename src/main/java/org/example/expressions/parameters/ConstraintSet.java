@@ -37,7 +37,7 @@ public final class ConstraintSet implements Comparable<ConstraintSet>, ToZ3BoolE
         Objects.requireNonNull(constraints, "Constraints set cannot be null");
         // 防御性拷贝并确保有序性
         this.constraints = Collections.unmodifiableSortedSet(new TreeSet<>(constraints));
-        logger.debug("创建 ConstraintSet: {}", this);
+        logger.info("创建 ConstraintSet: {}", this);
         // 由于内部是 SortedSet，直接计算集合的哈希码即可
         this.hashCode = Objects.hash(this.constraints);
     }
@@ -68,7 +68,7 @@ public final class ConstraintSet implements Comparable<ConstraintSet>, ToZ3BoolE
     public ConstraintSet and(ParameterConstraint otherConstraint) {
         Set<ParameterConstraint> newConstraints = new TreeSet<>(this.constraints);
         newConstraints.add(otherConstraint);
-        logger.debug("对ConstraintSet{}和Constraint{}进行合取", this, otherConstraint);
+        logger.info("对ConstraintSet{}和Constraint{}进行合取", this, otherConstraint);
         return new ConstraintSet(newConstraints);
     }
 
@@ -80,7 +80,7 @@ public final class ConstraintSet implements Comparable<ConstraintSet>, ToZ3BoolE
     public ConstraintSet and(ConstraintSet otherSet) {
         Set<ParameterConstraint> newConstraints = new TreeSet<>(this.constraints);
         newConstraints.addAll(otherSet.constraints);
-        logger.debug("对ConstraintSet{}和ConstraintSet{}进行合取", this, otherSet);
+        logger.info("对ConstraintSet{}和ConstraintSet{}进行合取", this, otherSet);
         return new ConstraintSet(newConstraints);
     }
 
@@ -88,6 +88,7 @@ public final class ConstraintSet implements Comparable<ConstraintSet>, ToZ3BoolE
      * 检查此约束集是否为空（即不包含任何约束）。
      * 空约束集在语义上表示恒真。
      * @return true 如果为空，false 否则。
+     * TODO: 内部冲突检查？
      */
     public boolean isEmpty() {
         return constraints.isEmpty();

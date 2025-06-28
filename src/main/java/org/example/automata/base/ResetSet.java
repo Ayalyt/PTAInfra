@@ -46,7 +46,7 @@ public final class ResetSet {
             }
             tempMap.put(clock, value);
         }
-        logger.debug("创建 ResetSet: {}", tempMap);
+        logger.info("创建 ResetSet: {}", tempMap);
         this.resets = Collections.unmodifiableMap(tempMap);
         this.hashCode = Objects.hash(tempMap);
     }
@@ -65,7 +65,7 @@ public final class ResetSet {
             }
             tempMap.put(clock, Rational.ZERO);
         }
-        logger.debug("创建 ResetSet: {}", tempMap);
+        logger.info("创建 ResetSet: {}", tempMap);
         this.resets = Collections.unmodifiableMap(tempMap);
         this.hashCode = Objects.hash(tempMap);
     }

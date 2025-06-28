@@ -63,7 +63,7 @@ public final class Alphabet {
         }
 
         this.hashCode = Objects.hash(actions);
-        logger.debug("创建 Alphabet，包含 {} 个动作。详情：{}", this.actions.size(), this.actions);
+        logger.info("创建 Alphabet，包含 {} 个动作。详情：{}", this.actions.size(), this.actions);
     }
 
     /**

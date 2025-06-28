@@ -2,7 +2,10 @@ package org.example.utils;
 
 import com.microsoft.z3.ArithExpr;
 import com.microsoft.z3.Context;
+import com.microsoft.z3.RealExpr;
+import com.microsoft.z3.RealSort;
 import lombok.Getter;
+import org.example.symbolic.Z3VariableManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -82,7 +85,7 @@ public final class Rational implements Comparable<Rational> {
     private Rational(BigInteger numerator, BigInteger denominator) {
         this.numerator = numerator;
         this.denominator = denominator;
-        logger.debug("创建了一个Rational: {} / {}", numerator, denominator);
+        logger.info("创建了一个Rational: {} / {}", numerator, denominator);
     }
 
     /**
@@ -156,7 +159,7 @@ public final class Rational implements Comparable<Rational> {
     }
 
     public static Rational valueOf(BigInteger numerator, BigInteger denominator) {
-        logger.debug("尝试创建一个Rational: {} / {}", numerator, denominator);
+        logger.info("尝试创建一个Rational: {} / {}", numerator, denominator);
         // 预检查简化情况
         if (denominator.equals(BIG_INT_ZERO)) {
             int signNum = numerator.signum();
@@ -208,7 +211,7 @@ public final class Rational implements Comparable<Rational> {
             }
             CACHE.put(normalizedKey, normalized);
         }
-        logger.debug("创建了一个Rational并缓存: {}", normalized);
+        logger.info("创建了一个Rational并缓存: {}", normalized);
         return normalized;
     }
 
@@ -671,13 +674,22 @@ public final class Rational implements Comparable<Rational> {
         return this.denominator.equals(BIG_INT_ONE);
     }
 
-    public ArithExpr toZ3Real(Context ctx) {
-        if (!isFinite()) {
-            logger.warn("无法将非有限的 Rational 值 (" + this + ") 转换为 Z3 算术表达式。");
-            throw new IllegalArgumentException("无法将非有限的 Rational 值 (" + this + ") 转换为 Z3 算术表达式。");
+    // TODO: 无限的处理：符号常量并添加公理最好，但是太麻烦了。之后再说吧
+    public ArithExpr toZ3Real(Context ctx, Z3VariableManager varManager) {
+        if (this == INFINITY) {
+            return varManager.getPosInfZ3();
         }
+        if (this == NEG_INFINITY) {
+            return varManager.getNegInfZ3();
+        }
+        if (isNaN()) {
+            logger.warn("无法将 NaN 值转换为 Z3 算术表达式。");
+            throw new IllegalArgumentException("无法将 NaN 值转换为 Z3 算术表达式。");
+        }
+        // 对于有限数，使用 BigInteger 直接创建 Z3 实数，避免精度问题。
         return ctx.mkReal(this.toString());
     }
+
 
 
     /**

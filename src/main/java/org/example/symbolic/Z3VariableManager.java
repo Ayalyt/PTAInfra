@@ -2,6 +2,7 @@ package org.example.symbolic;
 
 import com.microsoft.z3.ArithExpr;
 import com.microsoft.z3.Context;
+import com.microsoft.z3.RealExpr;
 import com.microsoft.z3.Solver;
 import lombok.Getter;
 import org.example.core.Clock;
@@ -31,6 +32,10 @@ public class Z3VariableManager {
     private final Set<Parameter> allKnownParameters;
     private final Set<Clock> allKnownClocks;
 
+    private final RealExpr posInfZ3;
+    private final RealExpr negInfZ3;
+
+
     /**
      * 构造函数。
      * @param ctx Z3 Context 实例。
@@ -44,6 +49,9 @@ public class Z3VariableManager {
 
         this.paramZ3Vars = new HashMap<>();
         this.clockZ3Vars = new HashMap<>();
+
+        this.posInfZ3 = (RealExpr) ctx.mkConst("∞", ctx.mkRealSort());
+        this.negInfZ3 = (RealExpr) ctx.mkConst("-∞", ctx.mkRealSort());
 
         // 预先创建所有已知参数和时钟的 Z3 变量，并缓存
         // 这样在 assertZeroClockConstraint 和其他地方使用时，变量已经存在
@@ -66,7 +74,7 @@ public class Z3VariableManager {
      */
     public ArithExpr getZ3Var(Parameter param) {
         return paramZ3Vars.computeIfAbsent(param, p -> {
-            logger.debug("创建 Z3 参数变量: {}", p.getName());
+            logger.info("创建 Z3 参数变量: {}", p.getName());
             return ctx.mkRealConst(p.getName());
         });
     }
@@ -79,7 +87,7 @@ public class Z3VariableManager {
      */
     public ArithExpr getZ3Var(Clock clock) {
         return clockZ3Vars.computeIfAbsent(clock, c -> {
-            logger.debug("创建 Z3 时钟变量: {}", c.getName());
+            logger.info("创建 Z3 时钟变量: {}", c.getName());
             return ctx.mkRealConst(c.getName());
         });
     }
@@ -93,14 +101,14 @@ public class Z3VariableManager {
     public void assertGlobalConstraints(Solver solver) {
         // 断言 x0 == 0
         solver.add(ctx.mkEq(getZ3Var(Clock.ZERO_CLOCK), ctx.mkReal(0)));
-        logger.debug("断言 Z3 约束: {} == 0", Clock.ZERO_CLOCK.getName());
+        logger.info("断言 Z3 约束: {} == 0", Clock.ZERO_CLOCK.getName());
 
         // 断言所有普通时钟 >= 0
         for (Clock clock : allKnownClocks) {
             if (!clock.isZeroClock()) {
                 ArithExpr z3ClockVar = getZ3Var(clock);
                 solver.add(ctx.mkGe(z3ClockVar, ctx.mkReal(0)));
-                logger.debug("断言 Z3 约束: {} >= 0", clock.getName());
+                logger.info("断言 Z3 约束: {} >= 0", clock.getName());
             }
         }
 
@@ -108,7 +116,7 @@ public class Z3VariableManager {
         for (Parameter param : allKnownParameters) {
             ArithExpr z3ParamVar = getZ3Var(param);
             solver.add(ctx.mkGe(z3ParamVar, ctx.mkReal(0)));
-            logger.debug("断言 Z3 约束: {} >= 0", param.getName());
+            logger.info("断言 Z3 约束: {} >= 0", param.getName());
         }
     }
 }

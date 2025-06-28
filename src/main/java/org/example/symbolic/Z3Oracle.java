@@ -59,9 +59,52 @@ public class Z3Oracle implements AutoCloseable {
         this.threadSolver = ThreadLocal.withInitial(() -> {
             Context ctx = threadCtx.get();
             Solver solver = ctx.mkSolver();
-            Z3VariableManager varManager = threadVarManager.get(); // 获取当前线程的 varManager
+            Z3VariableManager varManager = threadVarManager.get();
+
             // 在 Solver 初始化时断言所有全局约束 (x0 == 0, xi >= 0, pi >= 0)
             varManager.assertGlobalConstraints(solver);
+
+            // --- 断言无穷大的公理 ---
+            RealExpr posInf = varManager.getPosInfZ3();
+            RealExpr negInf = varManager.getNegInfZ3();
+            RealExpr zero = ctx.mkReal(0);
+
+            // 公理 1: 正无穷大大于负无穷大
+            solver.add(ctx.mkGt(posInf, negInf));
+            logger.debug("Z3 Axiom: ∞ > -∞");
+
+            // 公理 2: 正无穷大大于任何有限实数，负无穷大小于任何有限实数
+            // 遍历所有已知的时钟和参数变量，并添加这些公理
+            List<ArithExpr> allFiniteVars = new ArrayList<>();
+            allClocks.forEach(c -> allFiniteVars.add(varManager.getZ3Var(c)));
+            allParameters.forEach(p -> allFiniteVars.add(varManager.getZ3Var(p)));
+
+            for (ArithExpr v : allFiniteVars) {
+                solver.add(ctx.mkGt(posInf, v)); // POS_INF > v
+                solver.add(ctx.mkLt(negInf, v)); // NEG_INF < v
+                logger.debug("Z3 Axiom: ∞ > {} 和 -∞ < {}", v.toString(), v.toString());
+
+                // 公理 3: 无穷大与有限数的加法/减法
+                // POS_INF + v = POS_INF, POS_INF - v = POS_INF
+                // NEG_INF + v = NEG_INF, NEG_INF - v = NEG_INF
+                solver.add(ctx.mkEq(ctx.mkAdd(posInf, v), posInf));
+                solver.add(ctx.mkEq(ctx.mkSub(posInf, v), posInf));
+                solver.add(ctx.mkEq(ctx.mkAdd(negInf, v), negInf));
+                solver.add(ctx.mkEq(ctx.mkSub(negInf, v), negInf));
+                logger.debug("Z3 Axiom: ∞ +/- {} = ∞, -∞ +/- {} = -∞", v.toString(), v.toString());
+
+                // 公理 4: 有限数除以无穷大等于 0
+                solver.add(ctx.mkEq(ctx.mkDiv(v, posInf), zero));
+                solver.add(ctx.mkEq(ctx.mkDiv(v, negInf), zero));
+                logger.debug("Z3 Axiom: {} / ∞ = 0, {} / -∞ = 0", v.toString(), v.toString());
+
+                // 公理 5: 无穷大与无穷大的加法
+                solver.add(ctx.mkEq(ctx.mkAdd(posInf, posInf), posInf));
+                solver.add(ctx.mkEq(ctx.mkAdd(negInf, negInf), negInf));
+                logger.debug("Z3 Axiom: ∞ + ∞ = ∞, -∞ + -∞ = -∞");
+
+                // TODO： ∞ + -∞ 或 ∞ - ∞ 等结果为 NaN 的操作
+            }
             logger.debug("为线程 {} 初始化 Z3 Solver。", Thread.currentThread().getId());
             return solver;
         });
@@ -110,7 +153,7 @@ public class Z3Oracle implements AutoCloseable {
             addedAssertions.add(formula);
 
             Status status = solver.check();
-            logger.debug("Z3 check for formula: {} -> Status: {}", formula, status);
+            logger.info("针对该式进行Z3检查: {} -> Status: {}", formula, status);
             return status;
 
         } catch (Z3Exception e) {

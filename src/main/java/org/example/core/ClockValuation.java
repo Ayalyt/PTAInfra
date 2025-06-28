@@ -39,7 +39,7 @@ public final class ClockValuation implements Comparable<ClockValuation>{
                 throw new IllegalArgumentException("时钟值必须是非负实数。");
             }
         }
-        logger.debug("创建 ClockValuation: {}", clockValuation);
+        logger.info("创建 ClockValuation: {}", clockValuation);
         this.clockValuation = Collections.unmodifiableSortedMap(new TreeMap<>(clockValuation));
     }
 
@@ -65,7 +65,7 @@ public final class ClockValuation implements Comparable<ClockValuation>{
             }
             zeroValues.put(clock, Rational.ZERO);
         }
-        logger.debug("对于时钟列表{}创建零ClockValuation", clocks);
+        logger.info("对于时钟列表{}创建零ClockValuation", clocks);
         return new ClockValuation(zeroValues);
     }
 

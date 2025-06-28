@@ -34,7 +34,7 @@ public final class Clock implements Comparable<Clock> {
         this.id = id;
         this.name = name;
         this.hashCode = Objects.hash(id);
-        logger.debug("创建了一个Clock: {} with id {}", name, id);
+        logger.info("创建了一个Clock: {} with id {}", name, id);
     }
 
     /**
@@ -44,7 +44,6 @@ public final class Clock implements Comparable<Clock> {
      */
     public static Clock createNewClock() {
         int id = NEXT_ID.getAndIncrement();
-        logger.debug("创建了一个Clock: {} with id {}", "x" + id, id);
         return new Clock(id, "x" + id);
     }
 
@@ -58,7 +57,6 @@ public final class Clock implements Comparable<Clock> {
             logger.warn("名称 'x0' 已被占用，将使用默认名称 'x' + ID。");
             return createNewClock();
         }
-        logger.debug("创建了一个Clock: {} with id {}", name, NEXT_ID.get());
         return new Clock(NEXT_ID.getAndIncrement(), name);
     }
 

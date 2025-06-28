@@ -6,6 +6,7 @@ import lombok.Getter;
 import org.apache.commons.lang3.tuple.Pair;
 import org.example.automata.base.ResetSet;
 import org.example.core.Clock;
+import org.example.core.Parameter;
 import org.example.expressions.RelationType;
 import org.example.expressions.ToZ3BoolExpr;
 import org.example.expressions.parameters.LinearExpression;
@@ -46,6 +47,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
     private final AtomicGuard[][] boundsMatrix;
 
     private final int hashCode;
+
 
     // --- 构造函数 ---
 
@@ -90,27 +92,23 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
             System.arraycopy(boundsMatrix[i], 0, this.boundsMatrix[i], 0, size);
         }
         this.hashCode = Objects.hash(this.clockList, Arrays.deepHashCode(this.boundsMatrix));
-        logger.debug("创建 PDBM: {}", this);
+        logger.info("创建 PDBM: \n {}", this);
     }
 
     /**
-     * 创建一个表示所有时钟非负区域 (ci >= 0) 的初始 PDBM。
-     *
-     * @param allClocks PTA 中所有时钟的集合 (应包含零时钟 x0)。
-     * @return 代表初始非负区域 (ci >= 0 for all i) 的 PDBM。
+     * 创建一系列表示所有时钟为0且能够增长且规范化后的初始 CPDBM。
+     * @param allClocks PTA 中所有时钟的集合。
+     * @return 初始 CPDBM。
      */
-    public static PDBM createInitial(Set<Clock> allClocks) {
+    public static List<CPDBM> createInitial(Set<Clock> allClocks, Z3Oracle oracle) {
         List<Clock> clockList = new ArrayList<>(allClocks);
         if (!clockList.contains(Clock.ZERO_CLOCK)) {
             clockList.add(0, Clock.ZERO_CLOCK);
         }
-        List<Clock> sortedNonZeroClocks = clockList.stream()
+        // 流式方法将列表时钟按照id排序
+        List<Clock> finalClockList = clockList.stream()
                 .sorted(Comparator.comparingInt(Clock::getId))
-                .toList();
-
-        List<Clock> finalClockList = new ArrayList<>();
-        finalClockList.add(Clock.ZERO_CLOCK);
-        finalClockList.addAll(sortedNonZeroClocks);
+                .collect(Collectors.toList());
 
         Map<Clock, Integer> clockIndexMap = new HashMap<>();
         for (int i = 0; i < finalClockList.size(); i++) {
@@ -120,25 +118,36 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
         int size = finalClockList.size();
         AtomicGuard[][] initialBounds = new AtomicGuard[size][size];
 
-        // 初始化矩阵
         for (int i = 0; i < size; i++) {
             for (int j = 0; j < size; j++) {
                 Clock ci = finalClockList.get(i);
                 Clock cj = finalClockList.get(j);
 
                 if (i == j) {
-                    // 对角线元素：ci - ci <= 0 (恒真)
-                    initialBounds[i][j] = AtomicGuard.of(ci, cj, LinearExpression.of(Rational.ZERO), RelationType.LE);
-                } else if (j == clockIndexMap.get(Clock.ZERO_CLOCK)) { // 处理第 0 列 (ci - x0)
-                    // ci - x0 >= 0 (ci >= 0) 等价于 x0 - ci <= 0
-                    initialBounds[i][j] = AtomicGuard.of(Clock.ZERO_CLOCK, ci, LinearExpression.of(Rational.ZERO), RelationType.LE);
+                    // 对角线：ci - ci ≤ 0
+                    initialBounds[i][j] = AtomicGuard.of(
+                            ci, cj,
+                            LinearExpression.of(Rational.ZERO),
+                            RelationType.LE
+                    );
                 } else {
-                    // 其他元素：ci - cj <= infinity (无上界)
-                    initialBounds[i][j] = AtomicGuard.of(ci, cj, LinearExpression.of(Rational.INFINITY), RelationType.LE); // 使用 LE 和 INFINITY 表示无上界
+                    // 非对角线：ci - cj ≤ 0
+                    initialBounds[i][j] = AtomicGuard.of(
+                            ci, cj,
+                            LinearExpression.of(Rational.ZERO),
+                            RelationType.LE
+                    );
                 }
             }
         }
-        return new PDBM(finalClockList, clockIndexMap, initialBounds);
+
+        // 初始PDBM，此时所有时钟=0
+        PDBM initialPDBM = new PDBM(finalClockList, clockIndexMap, initialBounds);
+
+        // 应用时间推移操作 E↑：将非零时钟对零时钟的约束设为 < ∞
+        initialPDBM = initialPDBM.delay();
+
+        return initialPDBM.canonical(ConstraintSet.TRUE_CONSTRAINT_SET, oracle);
     }
 
     /**
@@ -165,16 +174,16 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
      * @param oracle Z3 Oracle 实例。
      * @return 包含多个 (ConstraintSet, PDBM) 对的列表。如果导致不可满足，返回空列表。
      */
-    public List<Map.Entry<ConstraintSet, PDBM>> addGuard(AtomicGuard newGuard, ConstraintSet currentConstraintSet, Z3Oracle oracle) {
-        logger.debug("PDBM.addGuard: 尝试添加新约束 {} 到 PDBM {} under C {}", newGuard, this, currentConstraintSet);
-        List<Map.Entry<ConstraintSet, PDBM>> resultPairs = new ArrayList<>();
+    public List<CPDBM> addGuard(AtomicGuard newGuard, ConstraintSet currentConstraintSet, Z3Oracle oracle) {
+        logger.info("PDBM.addGuard: 尝试添加新约束 {} 到被约束{}管理的PDBM ：\n{}", newGuard, currentConstraintSet, this);
+        List<CPDBM> resultPairs = new ArrayList<>();
 
 
         // 1. 时钟合法性检查
-        if (!clockList.contains(newGuard.getClock1()) && !clockList.contains(newGuard.getClock2())) {
+        if (!clockList.contains(newGuard.getClock1()) || !clockList.contains(newGuard.getClock2())) {
             logger.warn("PDBM.addGuard: 约束 {} 中的时钟未在 PDBM 中找到，忽略此约束。", newGuard);
             // 如果时钟不在 PDBM 中，则此守卫不影响当前 PDBM，返回原始 (C, D) 对
-            resultPairs.add(Map.entry(currentConstraintSet, this));
+            resultPairs.add(new CPDBM(currentConstraintSet, this));
             return resultPairs;
         }
 
@@ -189,14 +198,14 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
 
         // 3. Oracle 检查覆盖关系
         Z3Oracle.OracleResult oracleResult = oracle.checkCoverage(comparisonConstraint, currentConstraintSet);
-        logger.debug("PDBM.addGuard: Oracle 结果 for C(D,f) {} on C {} is {}", comparisonConstraint, currentConstraintSet, oracleResult);
+        logger.info("PDBM.addGuard: Oracle 结果 for C(D,f) {} on C {} is {}", comparisonConstraint, currentConstraintSet, oracleResult);
 
         // 4. 根据 Oracle 结果处理
         switch (oracleResult) {
             case YES:
                 // Rule R1: C |= C(D, f) -> (C, D)
                 // 新守卫已被当前 PDBM 隐含，无需修改 PDBM
-                resultPairs.add(Map.entry(currentConstraintSet, this));
+                resultPairs.add(new CPDBM(currentConstraintSet, this));
                 break;
             case NO:
                 // Rule R2: C |= ¬C(D, f) -> (C, D[f])
@@ -204,7 +213,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
                 AtomicGuard[][] newBoundsMatrixForNo = deepCopyBoundsMatrix();
                 newBoundsMatrixForNo[i][j] = newGuard; // 更新为更严格的守卫
                 PDBM newPDBMForNo = new PDBM(this.clockList, this.clockIndexMap, newBoundsMatrixForNo);
-                resultPairs.add(Map.entry(currentConstraintSet, newPDBMForNo));
+                resultPairs.add(new CPDBM(currentConstraintSet, newPDBMForNo));
                 break;
             case SPLIT:
                 // Rule R3: (C ∪ {C(D, f)}, D)
@@ -212,21 +221,21 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
                 // PDBM 分裂成两个 (ConstraintSet, PDBM) 对
                 // 分支 1: 约束集添加 C(D, f)，PDBM 保持不变
                 ConstraintSet C1 = currentConstraintSet.and(comparisonConstraint);
-                resultPairs.add(Map.entry(C1, this));
+                resultPairs.add(new CPDBM(C1, this));
 
                 // 分支 2: 约束集添加 ¬C(D, f)，PDBM 矩阵更新为新守卫
                 ConstraintSet C2 = currentConstraintSet.and(comparisonConstraint.negate());
                 AtomicGuard[][] newBoundsMatrixForSplit = deepCopyBoundsMatrix();
                 newBoundsMatrixForSplit[i][j] = newGuard; // 更新为更严格的守卫
                 PDBM newPDBMForSplit = new PDBM(this.clockList, this.clockIndexMap, newBoundsMatrixForSplit);
-                resultPairs.add(Map.entry(C2, newPDBMForSplit));
+                resultPairs.add(new CPDBM(C2, newPDBMForSplit));
                 break;
             case UNKNOWN:
                 logger.warn("PDBM.addGuard: Z3 Oracle 返回 UNKNOWN 状态，无法确定约束关系。返回空列表。");
                 break;
             default:
         }
-        logger.debug("PDBM.addGuard: 返回 {} 个 (ConstraintSet, PDBM) 对。", resultPairs.size());
+        logger.info("PDBM.addGuard: 返回 {} 个 (ConstraintSet, PDBM) 对。", resultPairs.size());
         return resultPairs;
     }
 
@@ -272,9 +281,8 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
         }
 
         // 构造 ParameterConstraint: (currentBound - newBound) finalRelation 0
-        // TODO: 检查一下bound构造方向对于后续的影响如何
         return ParameterConstraint.of(
-                i <= j ? currentGuard.getBound().subtract(newGuard.getBound()) : newGuard.getBound().subtract(currentGuard.getBound()),
+                currentGuard.getBound().subtract(newGuard.getBound()),
                 LinearExpression.of(Rational.ZERO),
                 finalRelation
         );
@@ -290,29 +298,29 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
      * @param oracle Z3 Oracle 实例。
      * @return 包含一个或多个规范化 (ConstraintSet, PDBM) 对的列表。如果导致不可满足，返回空列表。
      */
-    public List<Map.Entry<ConstraintSet, PDBM>> canonical(ConstraintSet initialConstraintSet, Z3Oracle oracle) {
-        logger.debug("PDBM.canonical: 规范化 PDBM {} under initial C {}", this, initialConstraintSet);
+    public List<CPDBM> canonical(ConstraintSet initialConstraintSet, Z3Oracle oracle) {
+        logger.debug("PDBM.canonical: 在约束集{}下规范化 PDBM\n {}", initialConstraintSet, this);
 
         // 维护一个待处理的 (ConstraintSet, PDBM) 对的队列
-        Queue<Map.Entry<ConstraintSet, PDBM>> queue = new LinkedList<>();
-        queue.add(Map.entry(initialConstraintSet, this));
+        Queue<CPDBM> queue = new LinkedList<>();
+        queue.add(new CPDBM(initialConstraintSet, this));
 
         // 维护一个已处理的规范化 (ConstraintSet, PDBM) 对的集合
-        Set<Map.Entry<ConstraintSet, PDBM>> canonicalResults = new HashSet<>();
+        Set<CPDBM> canonicalResults = new HashSet<>();
 
         // 迭代直到队列为空
         while (!queue.isEmpty()) {
-            Map.Entry<ConstraintSet, PDBM> currentEntry = queue.poll();
-            ConstraintSet currentC = currentEntry.getKey();
-            PDBM currentD = currentEntry.getValue();
+            CPDBM currentEntry = queue.poll();
+            ConstraintSet currentC = currentEntry.getConstraintSet();
+            PDBM currentD = currentEntry.getPdbm();
 
             // 检查当前 (C, D) 是否已经处理过或语义为空
             if (currentC.isEmpty() || currentD.isEmpty(currentC, oracle)) { // isEmpty 检查 C 是否矛盾，以及 D 在 C 下是否可满足
-                logger.debug("PDBM.canonical: 跳过空或已处理的 (C: {}, D: {})", currentC, currentD);
+                logger.debug("PDBM.canonical: 跳过空或已处理的 (C: {}, D: \n {})", currentC, currentD);
                 continue;
             }
             if (canonicalResults.contains(currentEntry)) {
-                logger.debug("PDBM.canonical: 跳过重复的 (C: {}, D: {})", currentC, currentD);
+                logger.debug("PDBM.canonical: 跳过重复的 (C: {}, D: \n{})", currentC, currentD);
                 continue;
             }
 
@@ -334,8 +342,8 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
                         AtomicGuard Dij = tempBoundsMatrix[i][j];
 
                         // 计算通过 k 的新路径的边界和关系
-                        LinearExpression potentialNewBoundExpr = Dik.getBound().add(Dkj.getBound());
-                        RelationType potentialNewRelation = Dik.getRelation().and(Dkj.getRelation());
+                        LinearExpression potentialNewBoundExpr = Dik.getUpperBound().add(Dkj.getUpperBound());
+                        RelationType potentialNewRelation = Dik.getUpperBoundRelation().and(Dkj.getUpperBoundRelation());
 
                         // 构造潜在的新守卫
                         AtomicGuard potentialNewGuard = AtomicGuard.of(
@@ -346,9 +354,9 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
                         // 比较当前边界 Dij 和潜在的新边界 potentialNewGuard
                         // C(D, f) = Dij (Dij.relation AND potentialNewGuard.relation) potentialNewGuard
                         ParameterConstraint comparisonConstraint = ParameterConstraint.of(
-                                Dij.getBound(),
-                                potentialNewGuard.getBound(),
-                                Dij.getRelation().and(potentialNewGuard.getRelation())
+                                Dij.getUpperBound(),
+                                potentialNewGuard.getUpperBound(),
+                                Dij.getUpperBoundRelation().and(potentialNewGuard.getUpperBoundRelation())
                         );
 
                         oracleResult = oracle.checkCoverage(comparisonConstraint, currentC);
@@ -368,16 +376,16 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
                                 // 分支 1: 约束集添加 C(D, f)，PDBM 保持不变 (但需要复制当前状态)
                                 ConstraintSet C_split1 = currentC.and(comparisonConstraint);
                                 PDBM D_split1 = new PDBM(currentD.clockList, currentD.clockIndexMap, currentD.boundsMatrix); // 复制当前 PDBM
-                                queue.add(Map.entry(C_split1, D_split1));
-                                logger.debug("PDBM.canonical: 发生分裂，添加分支 1: (C: {}, D: {})", C_split1, D_split1);
+                                queue.add(new CPDBM(C_split1, D_split1));
+                                logger.debug("PDBM.canonical: 发生分裂，添加分支 1: (C: {}, D: \n{})", C_split1, D_split1);
 
                                 // 分支 2: 约束集添加 ¬C(D, f)，PDBM 矩阵更新为新守卫
                                 ConstraintSet C_split2 = currentC.and(comparisonConstraint.negate());
                                 AtomicGuard[][] D_split2_matrix = currentD.deepCopyBoundsMatrix();
                                 D_split2_matrix[i][j] = potentialNewGuard;
                                 PDBM D_split2 = new PDBM(currentD.clockList, currentD.clockIndexMap, D_split2_matrix);
-                                queue.add(Map.entry(C_split2, D_split2));
-                                logger.debug("PDBM.canonical: 发生分裂，添加分支 2: (C: {}, D: {})", C_split2, D_split2);
+                                queue.add(new CPDBM(C_split2, D_split2));
+                                logger.debug("PDBM.canonical: 发生分裂，添加分支 2: (C: {}, D: \n{})", C_split2, D_split2);
 
                                 // 由于发生了分裂，当前路径已经分叉，可以跳出内层循环，处理下一个队列元素
                                 // 或者更严格地，直接将当前 (C,D) 标记为已处理，并依赖队列中的新分支
@@ -414,7 +422,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
             if (updatedInThisIteration) {
                 // 如果发生了分裂，新的分支已经加入队列，当前 PDBM 不再需要加入
                 if (oracleResult != Z3Oracle.OracleResult.SPLIT && oracleResult != Z3Oracle.OracleResult.UNKNOWN) {
-                    queue.add(Map.entry(currentC, new PDBM(this.clockList, this.clockIndexMap, tempBoundsMatrix)));
+                    queue.add(new CPDBM(currentC, new PDBM(this.clockList, this.clockIndexMap, tempBoundsMatrix)));
                 }
             } else {
                 // 没有更新，表示已达到规范形式，加入结果集
@@ -433,7 +441,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
      * @return 移除约束后的新 PDBM 实例。
      */
     public PDBM delay() {
-        logger.debug("PDBM.delay: 应用时间流逝操作到 PDBM {}", this);
+        logger.debug("PDBM.delay: 应用时间流逝操作到 PDBM \n{}", this);
         AtomicGuard[][] newBoundsMatrix = deepCopyBoundsMatrix();
         int zeroClockIndex = clockIndexMap.get(Clock.ZERO_CLOCK);
 
@@ -462,7 +470,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
      * @return 重置后的新 PDBM 实例。
      */
     public PDBM reset(ResetSet resetSet) {
-        logger.debug("PDBM.reset: 应用重置操作 {} 到 PDBM {}", resetSet, this);
+        logger.debug("PDBM.reset: 应用重置操作 {} 到 PDBM \n{}", resetSet, this);
         AtomicGuard[][] newBoundsMatrix = deepCopyBoundsMatrix();
         int zeroClockIndex = clockIndexMap.get(Clock.ZERO_CLOCK);
 
@@ -487,8 +495,8 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
                 // 这里的 k 是重置时钟 i_reset
                 // D_i_reset,j = (e_0j + b, <_0j)
                 AtomicGuard x0_minus_cj_guard = newBoundsMatrix[zeroClockIndex][j]; // x0 - cj
-                LinearExpression newBound_i_j = LinearExpression.of(resetValue).add(x0_minus_cj_guard.getBound());
-                RelationType newRelation_i_j = x0_minus_cj_guard.getRelation();
+                LinearExpression newBound_i_j = LinearExpression.of(resetValue).add(x0_minus_cj_guard.getUpperBound());
+                RelationType newRelation_i_j = x0_minus_cj_guard.getUpperBoundRelation();
                 newBoundsMatrix[resetClockIndex][j] = AtomicGuard.of(resetClock, cj, newBound_i_j, newRelation_i_j);
 
                 // 3. 更新所有 x_j - x_resetClock 的边界 (即 j 列)
@@ -496,14 +504,16 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
                 // 这里的 k 是重置时钟 i_reset
                 // D_j,i_reset = (e_j0 - b, <_j0)
                 AtomicGuard cj_minus_x0_guard = newBoundsMatrix[j][zeroClockIndex]; // cj - x0
-                LinearExpression newBound_j_i = cj_minus_x0_guard.getBound().subtract(LinearExpression.of(resetValue));
-                RelationType newRelation_j_i = cj_minus_x0_guard.getRelation();
+                LinearExpression newBound_j_i = cj_minus_x0_guard.getUpperBound().subtract(LinearExpression.of(resetValue));
+                RelationType newRelation_j_i = cj_minus_x0_guard.getUpperBoundRelation();
                 newBoundsMatrix[j][resetClockIndex] = AtomicGuard.of(cj, resetClock, newBound_j_i, newRelation_j_i);
             }
         }
         logger.debug("PDBM.reset: 重置操作完成。");
         return new PDBM(this.clockList, this.clockIndexMap, newBoundsMatrix);
     }
+
+
 
     /**
      * 检查此 PDBM 的语义是否为空 (即 [D]v 是否为空)。
@@ -536,6 +546,33 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
             System.arraycopy(this.boundsMatrix[i], 0, newMatrix[i], 0, size);
         }
         return newMatrix;
+    }
+
+    // === 常用api ===
+
+    // TODO: 功能上没做异常链，此外效率很差。
+    public List<CPDBM> addGuardAndCanonical(AtomicGuard newGuard, ConstraintSet constraints, Z3Oracle oracle) {
+
+        // 添加初始不变式
+        List<CPDBM> afterInvariantPairs = this.addGuard(
+                newGuard,
+                constraints,
+                oracle
+        );
+
+        // 规范化所有PDBM
+        List<CPDBM> canonicalPairs = new ArrayList<>();
+        for (CPDBM entry : afterInvariantPairs) {
+            ConstraintSet currentC = entry.getConstraintSet();
+            PDBM currentD = entry.getPdbm();
+            List<CPDBM> canonicalized = currentD.canonical(currentC, oracle);
+            canonicalPairs.addAll(canonicalized);
+        }
+
+        // 过滤已经不可满足的PDBM
+        canonicalPairs.removeIf(entry -> entry.getConstraintSet().isEmpty() || entry.getPdbm().isEmpty(entry.getConstraintSet(), oracle));
+
+        return canonicalPairs;
     }
 
     // === Z3 转换 ===
@@ -604,7 +641,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
             sb.append(String.format("%" + maxClockNameWidth + "s |", clock_i.getName())); // 行标题 时钟名
             for (int j = 0; j < size; j++) {
                 AtomicGuard guard = boundsMatrix[i][j];
-                String element = String.format("%s %s", guard.getRelation().getSymbol(), guard.getBound().toString());
+                String element = String.format("%s", guard.toUpperBoundString());
                 sb.append(String.format(" %-" + elementWidth + "s", element));
             }
             sb.append('\n');

@@ -34,7 +34,7 @@ public final class Location implements Comparable<Location> { // 实现 Comparab
         this.id = id;
         this.label = Objects.requireNonNull(label, "Location label cannot be null");
         this.hashCode = Objects.hash(id, label);
-        logger.debug("创建了一个Location: {} with id {}", label, id);
+        logger.info("创建了一个Location: {} with id {}", label, id);
     }
 
     /**

@@ -64,11 +64,11 @@ public final class ParameterConstraint implements Comparable<ParameterConstraint
             if (isFalse) {
                 logger.warn("ParameterConstraint-构造函数: 创建了一个恒假约束: {}", this);
             } else if (isTrue) {
-                logger.debug("ParameterConstraint-构造函数: 创建了一个恒真约束: {}", this);
+                logger.info("ParameterConstraint-构造函数: 创建了一个恒真约束: {}", this);
             }
         }
         this.hashCode = Objects.hash(this.leftExpr, this.relation);
-        logger.debug("创建 ParameterConstraint: {}", this);
+        logger.info("创建 ParameterConstraint: {}", this);
     }
 
     /**

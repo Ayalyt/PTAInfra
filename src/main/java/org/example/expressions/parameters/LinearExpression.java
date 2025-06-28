@@ -47,7 +47,7 @@ public final class LinearExpression implements Comparable<LinearExpression>, ToZ
         this.coefficients = Collections.unmodifiableSortedMap(new TreeMap<>(tempCoefficients));
         this.constant = Objects.requireNonNull(constant, "Constant term cannot be null");
         this.hashCode = Objects.hash(this.coefficients, this.constant);
-        logger.debug("创建 LinearExpression: {}，常数项为{}", this.coefficients, this.constant);
+        logger.info("创建 LinearExpression: {}", this);
     }
 
     /**
@@ -108,7 +108,7 @@ public final class LinearExpression implements Comparable<LinearExpression>, ToZ
         other.coefficients.forEach((para, value) -> {
             newCoefficients.merge(para, value, Rational::add);
         });
-        logger.debug("计算了{}和{}的和", this, other);
+        logger.info("计算了{}和{}的和", this, other);
         return new LinearExpression(newCoefficients, this.constant.add(other.constant));
     }
 
@@ -122,7 +122,7 @@ public final class LinearExpression implements Comparable<LinearExpression>, ToZ
         other.coefficients.forEach((para, value) -> {
             newCoefficients.merge(para, value.negate(), Rational::add); // 减去相当于加上负数
         });
-        logger.debug("计算了{}和{}的差", this, other);
+        logger.info("计算了{}和{}的差", this, other);
         return new LinearExpression(newCoefficients, this.constant.subtract(other.constant));
     }
 
@@ -133,7 +133,7 @@ public final class LinearExpression implements Comparable<LinearExpression>, ToZ
     public LinearExpression negate() {
         Map<Parameter, Rational> negatedCoefficients = this.coefficients.entrySet().stream()
                 .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().negate()));
-        logger.debug("计算了{}的相反数", this);
+        logger.info("计算了{}的相反数", this);
         return new LinearExpression(negatedCoefficients, this.constant.negate());
     }
 
@@ -150,7 +150,7 @@ public final class LinearExpression implements Comparable<LinearExpression>, ToZ
             Rational paramValue = parameterValuation.getValue(param); // 获取参数的具体值
             result = result.add(coeff.multiply(paramValue));
         }
-        logger.debug("根据参数赋值{}计算了{}的结果为{}", parameterValuation, this, result);
+        logger.info("根据参数赋值{}计算了{}的结果为{}", parameterValuation, this, result);
         return result;
     }
 
@@ -210,12 +210,12 @@ public final class LinearExpression implements Comparable<LinearExpression>, ToZ
 
     @Override
     public ArithExpr toZ3ArithExpr(Context ctx, Z3VariableManager varManager) {
-        ArithExpr result = constant.toZ3Real(ctx);
+        ArithExpr result = constant.toZ3Real(ctx, varManager);
         for (Map.Entry<Parameter, Rational> entry : coefficients.entrySet()) {
             Parameter param = entry.getKey();
             Rational coeff = entry.getValue();
             ArithExpr paramExpr = varManager.getZ3Var(param);
-            ArithExpr z3Coeff = coeff.toZ3Real(ctx);
+            ArithExpr z3Coeff = coeff.toZ3Real(ctx, varManager);
             result = ctx.mkAdd(result, ctx.mkMul(z3Coeff, paramExpr));
         }
         return result;

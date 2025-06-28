@@ -22,12 +22,12 @@ public final class Parameter implements Comparable<Parameter>{
         this.name = name;
         this.id = id;
         this.hashCode = Objects.hash(id);
-        logger.debug("创建了一个Parameter: {} with id {}", name, id);
+        logger.info("创建了一个Parameter: {} with id {}", name, id);
     }
 
     public static Parameter createNewParameter() {
         int id = NEXT_ID.getAndIncrement();
-        logger.debug("创建了一个新的Parameter: {} with id {}", "p" + id, id);
+        logger.info("创建了一个新的Parameter: {} with id {}", "p" + id, id);
         return new Parameter(id, "p" + id);
     }
 

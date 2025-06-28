@@ -31,10 +31,12 @@ public final class AtomicGuard implements Comparable<AtomicGuard>, ToZ3BoolExpr 
     private final Clock clock2;       // 第二个时钟 (c_j)
     private final LinearExpression bound; // 边界值 (E), 必须是 LinearExpression
     private final RelationType relation; // 关系类型 (<, <=, >, >=)
+    private final boolean isFliped; // 是否因时钟序应用而被更改
 
     /**
      * 私有构造函数，用于创建原子时钟差分约束。
      * 内部会进行规范化：确保 clock1.id <= clock2.id。
+     * 所有被实例化的guard，一定有时钟序。
      *
      * @param c1       第一个时钟。
      * @param c2       第二个时钟。
@@ -56,13 +58,15 @@ public final class AtomicGuard implements Comparable<AtomicGuard>, ToZ3BoolExpr 
             this.clock2 = c1;
             this.bound = bound.negate(); // E -> -E
             this.relation = relation.flip(); // < -> >, <= -> >=, > -> <, >= -> <=
+            this.isFliped = true;
         } else {
             this.clock1 = c1;
             this.clock2 = c2;
             this.bound = bound;
             this.relation = relation;
+            this.isFliped = false;
         }
-        logger.debug("创建了一个 AtomicGuard: {}", this);
+        logger.info("创建了一个 AtomicGuard: {}", this);
         // 检查自身矛盾 (在规范化后检查)
         if (this.clock1.equals(this.clock2)) { // 形式为 x - x ~ E
             // 此时，E 必须是常数，否则无法判断矛盾
@@ -109,6 +113,25 @@ public final class AtomicGuard implements Comparable<AtomicGuard>, ToZ3BoolExpr 
         return new AtomicGuard(this.clock1, this.clock2, this.bound, this.relation.negate());
     }
 
+    // 规范化方法
+
+    public Clock getUpperBoundClock1() {
+        return relation.isGreater() ? clock2 : clock1;
+    }
+
+    public Clock getUpperBoundClock2() {
+        return relation.isGreater() ? clock1 : clock2;
+    }
+
+    public LinearExpression getUpperBound() {
+        return relation.isGreater() ? bound.negate() : bound;
+    }
+
+    public RelationType getUpperBoundRelation() {
+        return relation.isGreater() ? relation.flip() : relation;
+    }
+
+
     // --- Z3 转换 ---
     @Override
     public BoolExpr toZ3BoolExpr(Context ctx, Z3VariableManager varManager) {
@@ -152,11 +175,11 @@ public final class AtomicGuard implements Comparable<AtomicGuard>, ToZ3BoolExpr 
     @Override
     public String toString() {
         String op = relation.getSymbol();
-        if (clock2.isZeroClock()) { // 形式为 clock1 - x0 ~ bound => clock1 ~ bound
-            return clock1.getName() + " " + op + " " + bound.toString();
-        } else { // 形式为 clock1 - clock2 ~ bound
-            return clock1.getName() + " - " + clock2.getName() + " " + op + " " + bound.toString();
-        }
+        return clock1.getName() + " - " + clock2.getName() + " " + op + " " + bound.toString();
+    }
+
+    public String toUpperBoundString() {
+        return getUpperBoundClock1() + " - " + getUpperBoundClock2() + " " + getUpperBoundRelation().getSymbol() + " " + getUpperBound();
     }
 
 
