@@ -187,10 +187,8 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
             return resultPairs;
         }
 
-        Integer i, j;
-        Pair<Integer, Integer>  positioning = positioning(newGuard);
-        i = positioning.getLeft();
-        j = positioning.getRight();
+        Integer i = this.clockIndexMap.get(newGuard.getUpperBoundClock1())
+                , j = this.clockIndexMap.get(newGuard.getUpperBoundClock2());
 
         // 2. 构造 C(D, f) 约束：e_ij (rel_ij AND rel_new) e_new
         // 转换为 ParameterConstraint 形式：(e_ij - e_new) (rel_ij AND rel_new) 0
@@ -240,25 +238,6 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
     }
 
     /**
-     * 根据newGuard的符号方向确认旧约束在上三角或下三角
-     * @param newGuard
-     * @return
-     */
-    private Pair<Integer, Integer> positioning (AtomicGuard newGuard){
-        Integer i = 0;
-        Integer j = 0;
-        boolean isGreater = newGuard.getRelation().isGreater();
-        if (isGreater){
-            i = clockIndexMap.get(newGuard.getClock2());
-            j = clockIndexMap.get(newGuard.getClock1());
-        } else {
-            i = clockIndexMap.get(newGuard.getClock1());
-            j = clockIndexMap.get(newGuard.getClock2());
-        }
-        return Pair.of(i, j);
-    }
-
-    /**
      * 辅助方法：根据两个 AtomicGuard 构造一个 ParameterConstraint 用于比较。
      * 论文中 C(D, f) = e_ij (<ij ⇒ <) e
      * 这里的 AtomicGuard 实例都应是规范化的上界形式 (LT 或 LE)。
@@ -270,19 +249,17 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
         AtomicGuard currentGuard = boundsMatrix[i][j];
 
         RelationType finalRelation;
-        if (newGuard.getRelation() == RelationType.LT || currentGuard.getRelation() == RelationType.LT) {
+
+        if (newGuard.getUpperBoundRelation() == RelationType.LT || currentGuard.getUpperBoundRelation() == RelationType.LT) {
             finalRelation = RelationType.LT;
-        } else if (newGuard.getRelation() == RelationType.GT || currentGuard.getRelation() == RelationType.GT) {
-            finalRelation = RelationType.GT;
-        } else if (i <= j) {
+        }
+        else {
             finalRelation = RelationType.LE;
-        } else {
-            finalRelation = RelationType.GE;
         }
 
         // 构造 ParameterConstraint: (currentBound - newBound) finalRelation 0
         return ParameterConstraint.of(
-                currentGuard.getBound().subtract(newGuard.getBound()),
+                currentGuard.getUpperBound().subtract(newGuard.getUpperBound()),
                 LinearExpression.of(Rational.ZERO),
                 finalRelation
         );
