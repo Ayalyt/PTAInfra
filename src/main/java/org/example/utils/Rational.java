@@ -46,8 +46,8 @@ public final class Rational implements Comparable<Rational> {
     public static final Rational ZERO = new Rational(BIG_INT_ZERO, BIG_INT_ONE); // 0/1
     public static final Rational ONE = new Rational(BIG_INT_ONE, BIG_INT_ONE);   // 1/1
     public static final Rational HALF = new Rational(BIG_INT_ONE, BigInteger.valueOf(2)); // 1/2
-    public static final Rational INFINITY = new Rational(BIG_INT_ONE, BIG_INT_ZERO);      // 1/0
-    public static final Rational NEG_INFINITY = new Rational(BIG_INT_NEG_ONE, BIG_INT_ZERO); // -1/0
+    public static final Rational INFINITY = new Rational(BigInteger.valueOf(1000000000), BIG_INT_ONE);      // 1000000000
+    public static final Rational NEG_INFINITY = new Rational(BigInteger.valueOf(-1000000000), BIG_INT_ONE); // -1000000000
     public static final Rational NaN = new Rational(BIG_INT_ZERO, BIG_INT_ZERO);         // 0/0
     public static final Rational EPSILON = new Rational(BigInteger.valueOf(1), BigInteger.valueOf(1000000));
 
@@ -677,11 +677,17 @@ public final class Rational implements Comparable<Rational> {
     // TODO: 无限的处理：符号常量并添加公理最好，但是太麻烦了。之后再说吧
     public ArithExpr toZ3Real(Context ctx, Z3VariableManager varManager) {
         if (this == INFINITY) {
-            return varManager.getPosInfZ3();
+            return ctx.mkReal("1000000000"); // 用一个非常大的数代替
         }
         if (this == NEG_INFINITY) {
-            return varManager.getNegInfZ3();
+            return ctx.mkReal("-1000000000"); // 用一个非常小的数代替
         }
+//        if (this == INFINITY) {
+//            return varManager.getPosInfZ3();
+//        }
+//        if (this == NEG_INFINITY) {
+//            return varManager.getNegInfZ3();
+//        }
         if (isNaN()) {
             logger.warn("无法将 NaN 值转换为 Z3 算术表达式。");
             throw new IllegalArgumentException("无法将 NaN 值转换为 Z3 算术表达式。");

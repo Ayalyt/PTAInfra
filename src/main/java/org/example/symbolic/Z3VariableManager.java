@@ -32,8 +32,8 @@ public class Z3VariableManager {
     private final Set<Parameter> allKnownParameters;
     private final Set<Clock> allKnownClocks;
 
-    private final RealExpr posInfZ3;
-    private final RealExpr negInfZ3;
+//    private final RealExpr posInfZ3;
+//    private final RealExpr negInfZ3;
 
 
     /**
@@ -49,9 +49,9 @@ public class Z3VariableManager {
 
         this.paramZ3Vars = new HashMap<>();
         this.clockZ3Vars = new HashMap<>();
-
-        this.posInfZ3 = (RealExpr) ctx.mkConst("∞", ctx.mkRealSort());
-        this.negInfZ3 = (RealExpr) ctx.mkConst("-∞", ctx.mkRealSort());
+//
+//        this.posInfZ3 = (RealExpr) ctx.mkConst("∞", ctx.mkRealSort());
+//        this.negInfZ3 = (RealExpr) ctx.mkConst("-∞", ctx.mkRealSort());
 
         // 预先创建所有已知参数和时钟的 Z3 变量，并缓存
         // 这样在 assertZeroClockConstraint 和其他地方使用时，变量已经存在

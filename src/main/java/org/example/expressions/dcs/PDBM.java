@@ -147,6 +147,8 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
         // 应用时间推移操作 E↑：将非零时钟对零时钟的约束设为 < ∞
         initialPDBM = initialPDBM.delay();
 
+        logger.info("创建初始 PDBM: \n {}", initialPDBM);
+        logger.info("初始PDBM的空性检查结果：{}", initialPDBM.isEmpty(ConstraintSet.TRUE_CONSTRAINT_SET, oracle));
         return initialPDBM.canonical(ConstraintSet.TRUE_CONSTRAINT_SET, oracle);
     }
 
@@ -292,7 +294,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
             PDBM currentD = currentEntry.getPdbm();
 
             // 检查当前 (C, D) 是否已经处理过或语义为空
-            if (currentC.isEmpty() || currentD.isEmpty(currentC, oracle)) { // isEmpty 检查 C 是否矛盾，以及 D 在 C 下是否可满足
+            if (currentD.isEmpty(currentC, oracle)) { // isEmpty 检查 C 是否矛盾，以及 D 在 C 下是否可满足
                 logger.debug("PDBM.canonical: 跳过空或已处理的 (C: {}, D: \n {})", currentC, currentD);
                 continue;
             }
