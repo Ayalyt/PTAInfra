@@ -22,11 +22,13 @@ import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static org.example.utils.RationalType.*;
+
 
 public final class Rational implements Comparable<Rational> {
     private static final Logger logger = LoggerFactory.getLogger(Rational.class);
     private static final int MAX_CACHE_MAGNITUDE = 1024;
-    private static final ConcurrentHashMap<String, Rational> CACHE = new ConcurrentHashMap<>(2048);
+    private static final ConcurrentHashMap<List<BigInteger>, Rational> CACHE = new ConcurrentHashMap<>(2048);
     private static final ForkJoinPool PARALLEL_POOL = new ForkJoinPool();
 
     // BigInteger 常量
@@ -39,17 +41,20 @@ public final class Rational implements Comparable<Rational> {
     private final BigInteger numerator;
     @Getter
     private final BigInteger denominator;
+    @Getter
+    private final RationalType type;
 
     private volatile int hash;
 
     // 常用常量
-    public static final Rational ZERO = new Rational(BIG_INT_ZERO, BIG_INT_ONE); // 0/1
-    public static final Rational ONE = new Rational(BIG_INT_ONE, BIG_INT_ONE);   // 1/1
-    public static final Rational HALF = new Rational(BIG_INT_ONE, BigInteger.valueOf(2)); // 1/2
-    public static final Rational INFINITY = new Rational(BigInteger.valueOf(1000000000), BIG_INT_ONE);      // 1000000000
-    public static final Rational NEG_INFINITY = new Rational(BigInteger.valueOf(-1000000000), BIG_INT_ONE); // -1000000000
-    public static final Rational NaN = new Rational(BIG_INT_ZERO, BIG_INT_ZERO);         // 0/0
-    public static final Rational EPSILON = new Rational(BigInteger.valueOf(1), BigInteger.valueOf(1000000));
+    public static final Rational ZERO = new Rational(BIG_INT_ZERO, BIG_INT_ONE, FINITE); // 0/1
+    public static final Rational ONE = new Rational(BIG_INT_ONE, BIG_INT_ONE, FINITE);   // 1/1
+    public static final Rational HALF = new Rational(BIG_INT_ONE, BigInteger.valueOf(2), FINITE); // 1/2
+    public static final Rational INFINITY = new Rational(BIG_INT_ONE, BIG_INT_ZERO, POS_INFINITY); // 1/0
+    public static final Rational NEG_INFINITY = new Rational(BIG_INT_NEG_ONE, BIG_INT_ZERO, RationalType.NEG_INFINITY); // -1/0
+    public static final Rational NaN = new Rational(BIG_INT_ZERO, BIG_INT_ZERO, NAN); // 0/0
+
+    public static final Rational EPSILON = new Rational(BigInteger.valueOf(1), BigInteger.valueOf(1000000), FINITE);
 
     static {
         CACHE.put(ZERO.getCacheKey(), ZERO);
@@ -59,84 +64,30 @@ public final class Rational implements Comparable<Rational> {
 
         for (int i = -16; i <= 16; i++) {
             if (i != 0 && i != 1 && i != -1) {
-                Rational r = new Rational(BigInteger.valueOf(i), BIG_INT_ONE);
+                Rational r = new Rational(BigInteger.valueOf(i), BIG_INT_ONE, FINITE);
                 CACHE.put(r.getCacheKey(), r);
             }
         }
         for (int den = 2; den <= 16; den++) {
             for (int num = -den; num <= den; num++) {
                 if (num != 0) {
-                    Rational r = valueOf(BigInteger.valueOf(num), BigInteger.valueOf(den));
-                    if (!CACHE.containsValue(r) && shouldCache(r)) {
-                        CACHE.put(r.getCacheKey(), r);
-                    }
+                    valueOf(num, den);
                 }
             }
         }
-        CACHE.put(INFINITY.getCacheKey(), INFINITY);
-        CACHE.put(NEG_INFINITY.getCacheKey(), NEG_INFINITY);
-        CACHE.put(NaN.getCacheKey(), NaN);
     }
 
 
     /**
      * 私有构造函数，用于内部创建和常量定义。
      */
-    private Rational(BigInteger numerator, BigInteger denominator) {
+    private Rational(BigInteger numerator, BigInteger denominator, RationalType type) {
         this.numerator = numerator;
         this.denominator = denominator;
-        logger.info("创建了一个Rational: {} / {}", numerator, denominator);
+        this.type = type;
+        logger.info("创建了一个Rational: {} / {}, 它是{}", numerator, denominator, type);
     }
 
-    /**
-     * 规范化有理数：
-     * 1. 处理分母为0 (Infinity/NaN)
-     * 2. 确保分母为正
-     * 3. 约分 (除以GCD)
-     * 4. 处理分子为0
-     */
-    private static Rational normalize(BigInteger num, BigInteger den) {
-        if (den.equals(BIG_INT_ZERO)) {
-            int signNum = num.signum();
-            if (signNum > 0) {
-                return INFINITY;
-            }
-            if (signNum < 0) {
-                return NEG_INFINITY;
-            }
-            return NaN;
-        }
-        if (num.equals(BIG_INT_ZERO)) {
-            return ZERO;
-        }
-
-        // 确保分母为正
-        if (den.signum() < 0) {
-            num = num.negate();
-            den = den.negate();
-        }
-
-        // 约分
-        BigInteger commonDivisor = num.gcd(den);
-        if (!commonDivisor.equals(BIG_INT_ONE)) {
-            num = num.divide(commonDivisor);
-            den = den.divide(commonDivisor);
-        }
-
-        if (den.equals(BIG_INT_ONE)) {
-            if (num.equals(BIG_INT_ZERO)) {
-                return ZERO;
-            }
-            if (num.equals(BIG_INT_ONE)) {
-                return ONE;
-            }
-        }
-        if (num.equals(BIG_INT_ONE) && den.equals(BigInteger.valueOf(2))) {
-            return HALF;
-        }
-        // 返回规范化后的内部表示
-        return new Rational(num, den);
-    }
 
     // ========== 工厂方法 ==========
 
@@ -158,10 +109,14 @@ public final class Rational implements Comparable<Rational> {
         return valueOf((long) numerator);
     }
 
+// 假设类的顶部，缓存的定义已修改为：
+// private static final Map<List<BigInteger>, Rational> CACHE = new ConcurrentHashMap<>();
+
     public static Rational valueOf(BigInteger numerator, BigInteger denominator) {
         logger.info("尝试创建一个Rational: {} / {}", numerator, denominator);
-        // 预检查简化情况
-        if (denominator.equals(BIG_INT_ZERO)) {
+
+        // 1. 处理分母为0的特殊情况
+        if (denominator.signum() == 0) {
             int signNum = numerator.signum();
             if (signNum > 0) {
                 return INFINITY;
@@ -171,48 +126,53 @@ public final class Rational implements Comparable<Rational> {
             }
             return NaN;
         }
-        if (numerator.equals(BIG_INT_ZERO)) {
+
+        // 2. 分子为0的情况
+        if (numerator.signum() == 0) {
             return ZERO;
         }
+
+        // 3. 分母总是正数
         if (denominator.signum() < 0) {
             numerator = numerator.negate();
             denominator = denominator.negate();
         }
+
+        // 4. 提前处理结果为1的情况，避免GCD
         if (numerator.equals(denominator)) {
             return ONE;
         }
-        if (denominator.equals(BIG_INT_ONE)) { // 已经是整数
-            if (numerator.equals(BIG_INT_ONE)) {
-                return ONE;
-            }
-            // 尝试从缓存获取小整数
-            String key = numerator.toString() + "/1";
-            Rational cached = CACHE.get(key);
-            if (cached != null) {
-                return cached;
-            }
-        }
-        logger.debug("无缓存值");
 
-        // 生成缓存键,对于非常大的数可能效率不高
-        String key = numerator.toString() + "/" + denominator.toString();
+        // 5. 约分
+        BigInteger commonDivisor = numerator.gcd(denominator);
+        if (!commonDivisor.equals(BIG_INT_ONE)) {
+            numerator = numerator.divide(commonDivisor);
+            denominator = denominator.divide(commonDivisor);
+        }
+
+
+        // 6. 规范化后检查是否为其他预定义常量
+        if (numerator.equals(BIG_INT_ONE) && denominator.equals(BigInteger.valueOf(2))) {
+            return HALF;
+        }
+
+        // 7. 统一处理缓存
+        List<BigInteger> key = List.of(numerator, denominator);
+
         Rational cached = CACHE.get(key);
         if (cached != null) {
+            logger.debug("从缓存命中: {}/{}", numerator, denominator);
             return cached;
         }
 
-        Rational normalized = normalize(numerator, denominator);
-
-        if (shouldCache(normalized)) {
-            String normalizedKey = normalized.getCacheKey();
-            Rational finalCached = CACHE.get(normalizedKey);
-            if (finalCached != null) {
-                return finalCached;
-            }
-            CACHE.put(normalizedKey, normalized);
+        // 8. 缓存未命中
+        logger.debug("无缓存值，创建并缓存: {}/{}", numerator, denominator);
+        Rational result = new Rational(numerator, denominator, RationalType.FINITE);
+        if (shouldCache(result)) {
+            CACHE.put(key, result);
         }
-        logger.info("创建了一个Rational并缓存: {}", normalized);
-        return normalized;
+
+        return result;
     }
 
     public static Rational valueOf(long numerator, long denominator) {
@@ -270,11 +230,11 @@ public final class Rational implements Comparable<Rational> {
         }
         s = s.trim();
 
-        // Check cache first
-        Rational cached = CACHE.get(s);
-        if (cached != null) {
-            return cached;
-        }
+//        Rational cached = CACHE.get(s);
+//        if (cached != null) {
+//            return cached;
+//        }
+        // 现在的缓存是BigInteger，String一定查不到
 
 
         // 处理特殊的无穷符号
@@ -337,17 +297,17 @@ public final class Rational implements Comparable<Rational> {
             return this;
         }
 
-        if (this.isInfinity() || other.isInfinity()) {
-            if (this.isInfinity() && other.isInfinity()) {
-                if (this.numerator.signum() != other.numerator.signum()) {
-                    return NaN;
-                }
-                return this;
-            }
-            return this.isInfinity() ? this : other;
+        if (this.type == RationalType.POS_INFINITY) {
+            return (other.type == RationalType.NEG_INFINITY) ? NaN : INFINITY;
+        }
+        if (this.type == RationalType.NEG_INFINITY) {
+            return (other.type == RationalType.POS_INFINITY) ? NaN : NEG_INFINITY;
+        }
+        if (other.type != RationalType.FINITE) {
+            return other;
         }
 
-        // Finite addition using BigInteger
+
         BigInteger num1 = this.numerator; BigInteger den1 = this.denominator;
         BigInteger num2 = other.numerator; BigInteger den2 = other.denominator;
 
@@ -368,6 +328,9 @@ public final class Rational implements Comparable<Rational> {
     public Rational multiply(Rational other) {
         logger.debug("计算了{} * {}", this, other);
         if (this.isNaN() || other.isNaN()) {
+            return NaN;
+        }
+        if ((this.isZero() && other.isInfinity()) || (this.isInfinity() && other.isZero())) {
             return NaN;
         }
 
@@ -430,19 +393,18 @@ public final class Rational implements Comparable<Rational> {
 
     public Rational negate() {
         logger.debug("计算了{}的相反数", this);
-        if (isNaN()) {
-            return NaN;
-        }
-        if (isZero()) {
-            return ZERO;
-        }
-        if (this == INFINITY) {
-            return NEG_INFINITY;
-        }
-        if (this == NEG_INFINITY) {
-            return INFINITY;
-        }
-        return valueOf(this.numerator.negate(), this.denominator);
+        return switch (this.type) {
+            case NAN -> NaN;
+            case POS_INFINITY -> NEG_INFINITY;
+            case NEG_INFINITY -> INFINITY;
+            case FINITE -> {
+                if (this.isZero()) {
+                    yield ZERO;
+                }
+                yield valueOf(this.numerator.negate(), this.denominator);
+            }
+            default -> throw new IllegalStateException("Unknown type");
+        };
     }
 
     public Rational abs() {
@@ -518,8 +480,7 @@ public final class Rational implements Comparable<Rational> {
      * @return 如果是有限数返回 true
      */
     public boolean isFinite() {
-        // 有限数的 denominator 必须非零
-        return !this.denominator.equals(BIG_INT_ZERO);
+        return type == RationalType.FINITE;
     }
 
     /**
@@ -527,8 +488,7 @@ public final class Rational implements Comparable<Rational> {
      * @return 是否为无穷大
      */
     public boolean isInfinity() {
-        // 无穷大的 denominator 为 0，numerator 非 0
-        return this.denominator.equals(BIG_INT_ZERO) && !this.numerator.equals(BIG_INT_ZERO);
+        return this.type == RationalType.POS_INFINITY || this.type == RationalType.NEG_INFINITY;
     }
 
     /**
@@ -536,7 +496,7 @@ public final class Rational implements Comparable<Rational> {
      * @return 是否为正无穷大
      */
     public boolean isPositiveInfinity() {
-        return this == INFINITY;
+        return this.type == RationalType.POS_INFINITY;
     }
 
 
@@ -545,7 +505,7 @@ public final class Rational implements Comparable<Rational> {
      * @return 是否为负无穷大
      */
     public boolean isNegativeInfinity() {
-        return this == NEG_INFINITY;
+        return this.type == RationalType.NEG_INFINITY;
     }
 
     /**
@@ -561,7 +521,7 @@ public final class Rational implements Comparable<Rational> {
      * @return 是否为NaN
      */
     public boolean isNaN() {
-        return this == NaN;
+        return this.type == RationalType.NAN;
     }
 
     /**
@@ -572,11 +532,13 @@ public final class Rational implements Comparable<Rational> {
      * @throws ArithmeticException 如果是 NaN
      */
     public int signum() {
-        if (isNaN()) {
-            throw new ArithmeticException("含有NaN");
-        }
-        // 对于有限数和无穷大，符号由分子决定 (分母规范化为正或零)
-        return this.numerator.signum();
+        return switch (this.type) {
+            case NAN -> throw new ArithmeticException("signum of NaN");
+            case POS_INFINITY -> 1;
+            case NEG_INFINITY -> -1;
+            case FINITE -> this.numerator.signum();
+            default -> throw new IllegalStateException("Unknown type");
+        };
     }
 
 
@@ -629,7 +591,8 @@ public final class Rational implements Comparable<Rational> {
      * @throws ArithmeticException 如果数值超出 long 范围或为非有限数
      */
     public long longValue() {
-        if (!isFinite()) {
+        if (isInfinity()) {
+            logger.error("尝试将无穷大转换为 long");
             throw new ArithmeticException("Rational to long: " + this);
         }
         if (isZero()) {
@@ -640,6 +603,7 @@ public final class Rational implements Comparable<Rational> {
         try {
             return result.longValueExact();
         } catch (ArithmeticException e) {
+            logger.error("Rational to long 溢出: {}", this);
             throw new ArithmeticException("Rational越界: " + this);
         }
     }
@@ -651,9 +615,9 @@ public final class Rational implements Comparable<Rational> {
      */
     public int intValue() {
         logger.debug("转换{}为int，截断小数", this);
-        if (!isFinite()) {
-            logger.warn(this+ "非有限值，默认返回0");
-            return 0;
+        if (isInfinity()) {
+            logger.error("尝试将无穷大转换为 int");
+            throw new ArithmeticException("Rational to int: " + this);
         }
         if (isZero()) {
             return 0;
@@ -674,74 +638,43 @@ public final class Rational implements Comparable<Rational> {
         return this.denominator.equals(BIG_INT_ONE);
     }
 
-    // TODO: 无限的处理：符号常量并添加公理最好，但是太麻烦了。之后再说吧
+    // 关于无限：当前方案是精确表示，并在输入Z3前进行逻辑判断
     public ArithExpr toZ3Real(Context ctx, Z3VariableManager varManager) {
-        if (this == INFINITY) {
-            return ctx.mkReal("1000000000"); // 用一个非常大的数代替
+        // 注意：这个方法不应该被调用在无穷大或NaN上。
+        // 这种检查应该在调用者那里完成，这里只处理有限数的情况。
+        if (this.type != RationalType.FINITE) {
+            logger.error("非法调用Rational.toZ3Real: 尝试将非有限数转换为Z3表达式: {}", this);
+            throw new IllegalArgumentException("非法调用Rational.toZ3Real: 尝试将非有限数转换为Z3表达式: " + this);
         }
-        if (this == NEG_INFINITY) {
-            return ctx.mkReal("-1000000000"); // 用一个非常小的数代替
-        }
-//        if (this == INFINITY) {
-//            return varManager.getPosInfZ3();
-//        }
-//        if (this == NEG_INFINITY) {
-//            return varManager.getNegInfZ3();
-//        }
-        if (isNaN()) {
-            logger.warn("无法将 NaN 值转换为 Z3 算术表达式。");
-            throw new IllegalArgumentException("无法将 NaN 值转换为 Z3 算术表达式。");
-        }
-        // 对于有限数，使用 BigInteger 直接创建 Z3 实数，避免精度问题。
+
         return ctx.mkReal(this.toString());
-    }
-
-
-
-    /**
-     * 静态比较
-     * 处理 Infinity, -Infinity, 和 NaN.
-     * NaN 处理遵循 IEEE 754 的部分思想
-     * 但 compareTo 要求全序关系，NaN 破坏了这一点。
-     * 先定义 NaN 比所有数都大 (除了它自己)。
-     */
-    public static int compare(Rational a, Rational b) {
-        if (a == b) {
-            return 0; // 同一对象或常量
-        }
-
-        // NaN > Infinity > finite > -Infinity
-        if (a.isNaN()) {
-            return b.isNaN() ? 0 : 1;
-        }
-        if (b.isNaN()) {
-            return -1;
-        }
-
-        // 处理无穷大
-        if (a.isInfinity()) { // a +Inf/-Inf
-            if (b.isInfinity()) { // b +Inf/-Inf
-                return a.numerator.compareTo(b.numerator); // +Inf vs +Inf = 0, -Inf vs -Inf = 0, +Inf vs -Inf = 1
-            }
-            return a.numerator.signum(); // a：Inf, b：finite
-        }
-        if (b.isInfinity()) { // a finite, b Inf
-            return -b.numerator.signum();
-        }
-
-        // 比较 a/b 和 c/d -> 比较 a*d 和 c*b
-        BigInteger ad = a.numerator.multiply(b.denominator);
-        BigInteger cb = b.numerator.multiply(a.denominator);
-        return ad.compareTo(cb);
     }
 
     // ========== 对象基础方法 ==========
 
     @Override
     public int compareTo(Rational other) {
-        return compare(this, other);
+        // 规定NaN > POS_INFINITY > FINITE > NEG_INFINITY
+        int thisOrd = (this.type == RationalType.NAN) ? 3 : (this.type == RationalType.POS_INFINITY) ? 2 : (this.type == RationalType.FINITE) ? 1 : 0;
+        int otherOrd = (other.type == RationalType.NAN) ? 3 : (other.type == RationalType.POS_INFINITY) ? 2 : (other.type == RationalType.FINITE) ? 1 : 0;
+
+        if (thisOrd != otherOrd) {
+            return Integer.compare(thisOrd, otherOrd);
+        }
+
+        // 如果类型相同
+        if (this.type == RationalType.FINITE) {
+            // 比较有限数
+            BigInteger ad = this.numerator.multiply(other.denominator);
+            BigInteger cb = other.numerator.multiply(this.denominator);
+            return ad.compareTo(cb);
+        }
+
+        // 如果都是NaN, POS_INF, 或 NEG_INF，则它们相等
+        return 0;
     }
 
+    // 建议修改
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -750,54 +683,30 @@ public final class Rational implements Comparable<Rational> {
         if (!(o instanceof Rational that)) {
             return false;
         }
-        return this.numerator.equals(that.numerator) && this.denominator.equals(that.denominator);
+        if (this.type != that.type) {
+            return false;
+        }
+        if (this.type == RationalType.FINITE) {
+            return this.numerator.equals(that.numerator) && this.denominator.equals(that.denominator);
+        }
+        return true;
     }
 
     @Override
     public int hashCode() {
         int h = hash;
         if (h == 0) {
-            h = Objects.hash(numerator, denominator);
+            h = Objects.hash(type, numerator, denominator);
             if (h == 0) {
-                h = 1; // 避免 hash 为 0 导致重复计算
+                h = 1;
             }
             hash = h;
         }
         return h;
     }
 
-    /**
-     * 获取用于缓存的键。
-     * 注意：对于非常大的 BigInteger，toString() 可能很慢。
-     * 可以考虑其他键生成策略，但这会使缓存查找复杂化。
-     */
-    private String getCacheKey() {
-        // 对于常量，直接使用它们的标准字符串表示
-        if (this == ZERO) {
-            return "0";
-        }
-        if (this == ONE) {
-            return "1";
-        }
-        if (this == HALF) {
-            return "1/2";
-        }
-        if (this == INFINITY) {
-            return "∞";
-        }
-        if (this == NEG_INFINITY) {
-            return "-∞";
-        }
-        if (this == NaN) {
-            return "NaN";
-        }
-
-        // 对于整数，使用 "num/1" 格式
-        if (this.denominator.equals(BIG_INT_ONE)) {
-            return this.numerator.toString() + "/1";
-        }
-        // 对于其他分数
-        return this.numerator.toString() + "/" + this.denominator.toString();
+    private List<BigInteger> getCacheKey() {
+        return List.of(this.numerator, this.denominator);
     }
 
     /**

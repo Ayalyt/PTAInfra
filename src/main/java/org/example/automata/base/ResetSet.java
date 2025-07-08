@@ -40,7 +40,7 @@ public final class ResetSet {
                 continue;
             }
 
-            if (!value.isFinite() || value.signum() < 0) {
+            if (value.isInfinity() || value.signum() < 0) {
                 logger.warn("时钟 '" + clock.getName() + "' 的重置值 '" + value + "' 必须是有限非负数。此重置将被忽略。");
                 continue;
             }

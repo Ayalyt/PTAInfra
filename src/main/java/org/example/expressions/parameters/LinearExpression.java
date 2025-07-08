@@ -154,6 +154,48 @@ public final class LinearExpression implements Comparable<LinearExpression>, ToZ
         return result;
     }
 
+    /**
+     * 判断此表达式在所有参数 pi >= 0 的假设下，是否恒为正无穷大。
+     * @return true 如果是，false 否则。
+     */
+    public boolean isCertainlyPositiveInfinity() {
+        if (constant.isPositiveInfinity()) {
+            // 是否有系数是负无穷
+            for (Rational coeff : coefficients.values()) {
+                if (coeff.isNegativeInfinity()) {
+                    // 出现了 ∞ - ∞
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (constant.isNegativeInfinity()) {
+            return false;
+        }
+
+        return false;
+    }
+
+    /**
+     * 判断此表达式在所有参数 pi >= 0 的假设下，是否恒为负无穷大。
+     * @return true 如果是，false 否则。
+     */
+    public boolean isCertainlyNegativeInfinity() {
+        if (constant.isNegativeInfinity()) {
+            for (Rational coeff : coefficients.values()) {
+                if (coeff.isPositiveInfinity()) {
+                    return false; // 出现 -∞ + ∞ 的情况
+                }
+            }
+            return true;
+        }
+        if (constant.isPositiveInfinity()) {
+            return false;
+        }
+        return false;
+    }
+
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();

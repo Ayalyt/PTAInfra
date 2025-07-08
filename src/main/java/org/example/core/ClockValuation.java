@@ -34,7 +34,7 @@ public final class ClockValuation implements Comparable<ClockValuation>{
                 logger.warn("零时钟 (x0) 不在此映射中存储。");
                 continue;
             }
-            if (!value.isFinite() || value.compareTo(Rational.ZERO) < 0) {
+            if (value.isInfinity() || value.compareTo(Rational.ZERO) < 0) {
                 logger.error("初始化{}时遇到问题：时钟值必须是非负实数。", clockValuation);
                 throw new IllegalArgumentException("时钟值必须是非负实数。");
             }

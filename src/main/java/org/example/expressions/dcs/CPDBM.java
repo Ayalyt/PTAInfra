@@ -53,15 +53,15 @@ public final class CPDBM implements Comparable<CPDBM> {
      */
     public Set<CPDBM> addGuard(AtomicGuard newGuard, Z3Oracle oracle) {
         logger.info("CPDBM.addGuard: 尝试添加守卫 {} 到\n {}", newGuard, this);
-        // 调用 PDBM 的 addGuard 方法，它会返回 (ConstraintSet, PDBM) 对的列表
-        List<CPDBM> pdbmResults = this.pdbm.addGuard(newGuard, this.constraintSet, oracle);
+        var splitResults = this.pdbm.addGuard(newGuard, this.constraintSet, oracle);
 
-        Set<CPDBM> resultCPDBMs = pdbmResults.stream()
-                .filter(cpdbm -> !cpdbm.isEmpty(oracle)) // 过滤掉语义为空的 CPDBM
-                .collect(Collectors.toSet());
+        Set<CPDBM> result = splitResults.stream()
+                            .map(pair -> new CPDBM(this.constraintSet.and(pair.getKey()), pair.getValue()))
+                            .filter(cpdbm -> !cpdbm.isEmpty(oracle))
+                            .collect(Collectors.toSet());
 
-        logger.info("CPDBM.addGuard: 返回 {} 个 CPDBM。", resultCPDBMs.size());
-        return resultCPDBMs;
+        logger.info("CPDBM.addGuard: 返回 {} 个新 CPDBM。", result.size());
+        return result;
     }
 
     /**
@@ -74,10 +74,11 @@ public final class CPDBM implements Comparable<CPDBM> {
     public Set<CPDBM> canonical(Z3Oracle oracle) {
         logger.info("CPDBM.canonical: 规范化 \n{}", this);
         // 调用 PDBM 内部的 canonical 方法，它会返回 (ConstraintSet, PDBM) 对的列表
-        List<CPDBM> pdbmResults = this.pdbm.canonical(this.constraintSet, oracle);
+        Collection<Pair<ConstraintSet, PDBM>> pdbmResults = this.pdbm.canonical(this.constraintSet, oracle);
 
         // 将 PDBM 返回的对转换为 CPDBM 集合
         Set<CPDBM> canonicalCPDBMs = pdbmResults.stream()
+                .map(pair -> new CPDBM(this.constraintSet.and(pair.getKey()), pair.getValue()))
                 .filter(cpdbm -> !cpdbm.isEmpty(oracle)) // 过滤掉语义为空的 CPDBM
                 .collect(Collectors.toSet());
 
@@ -198,8 +199,12 @@ public final class CPDBM implements Comparable<CPDBM> {
         allClocks.add(Clock.ZERO_CLOCK);
 
         Z3Oracle oracle = new Z3Oracle(allParameters, allClocks);
-        List<CPDBM> pdbm = PDBM.createInitial(allClocks, oracle);
-        for(CPDBM c: pdbm){
+        Collection<Pair<ConstraintSet, PDBM>> pdbm = PDBM.createInitial(allClocks, oracle);
+        Set<CPDBM> cpdbm = new HashSet<>();
+        for(Pair<ConstraintSet, PDBM> p: pdbm){
+            cpdbm.add(new CPDBM(p.getKey(), p.getValue()));
+        }
+        for(CPDBM c: cpdbm){
             c.addGuardAndCanonical(AtomicGuard.of(clock, Clock.ZERO_CLOCK, LinearExpression.of(Rational.ONE), RelationType.LE),
                 oracle
             );
