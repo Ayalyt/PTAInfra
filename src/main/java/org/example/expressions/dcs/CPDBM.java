@@ -199,9 +199,10 @@ public final class CPDBM implements Comparable<CPDBM> {
         allClocks.add(Clock.ZERO_CLOCK);
 
         Z3Oracle oracle = new Z3Oracle(allParameters, allClocks);
-        Collection<Pair<ConstraintSet, PDBM>> pdbm = PDBM.createInitial(allClocks, oracle);
+        PDBM pdbm = PDBM.createInitial(allClocks);
+        Collection<Pair<ConstraintSet, PDBM>> pdbmCanonicaled = pdbm.canonical(ConstraintSet.TRUE_CONSTRAINT_SET, oracle);
         Set<CPDBM> cpdbm = new HashSet<>();
-        for(Pair<ConstraintSet, PDBM> p: pdbm){
+        for(Pair<ConstraintSet, PDBM> p: pdbmCanonicaled){
             cpdbm.add(new CPDBM(p.getKey(), p.getValue()));
         }
         for(CPDBM c: cpdbm){

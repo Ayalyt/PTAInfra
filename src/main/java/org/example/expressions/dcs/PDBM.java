@@ -58,7 +58,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
      * @param clockIndexMap 时钟到索引的映射。
      * @param boundsMatrix  边界矩阵 (将被深拷贝)。
      */
-    private PDBM(List<Clock> clockList, Map<Clock, Integer> clockIndexMap, AtomicGuard[][] boundsMatrix) {
+    PDBM(List<Clock> clockList, Map<Clock, Integer> clockIndexMap, AtomicGuard[][] boundsMatrix) {
         // 确保零时钟在列表的第一个位置
         List<Clock> finalClockList = new ArrayList<>(clockList);
         if (!finalClockList.contains(Clock.ZERO_CLOCK)) {
@@ -100,7 +100,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
      * @param allClocks PTA 中所有时钟的集合。
      * @return 初始 CPDBM。
      */
-    public static Collection<Pair<ConstraintSet, PDBM>> createInitial(Set<Clock> allClocks, Z3Oracle oracle) {
+    public static PDBM createInitial(Set<Clock> allClocks) {
         List<Clock> clockList = new ArrayList<>(allClocks);
         if (!clockList.contains(Clock.ZERO_CLOCK)) {
             clockList.add(0, Clock.ZERO_CLOCK);
@@ -148,8 +148,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
         initialPDBM = initialPDBM.delay();
 
         logger.info("创建初始 PDBM: \n {}", initialPDBM);
-        logger.info("初始PDBM的空性检查结果：{}", initialPDBM.isEmpty(ConstraintSet.TRUE_CONSTRAINT_SET, oracle));
-        return initialPDBM.canonical(ConstraintSet.TRUE_CONSTRAINT_SET, oracle);
+        return initialPDBM;
     }
 
     /**
@@ -250,20 +249,28 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
     private ParameterConstraint createComparisonConstraint(AtomicGuard newGuard, Integer i, Integer j) {
         AtomicGuard currentGuard = boundsMatrix[i][j];
 
-        RelationType finalRelation;
+        RelationType currentRelation = currentGuard.getUpperBoundRelation();
+        LinearExpression currentBound = currentGuard.getUpperBound();
 
-        if (newGuard.getUpperBoundRelation() == RelationType.LT || currentGuard.getUpperBoundRelation() == RelationType.LT) {
-            finalRelation = RelationType.LT;
-        }
-        else {
-            finalRelation = RelationType.LE;
+        RelationType newRelation = newGuard.getUpperBoundRelation();
+        LinearExpression newBound = newGuard.getUpperBound();
+
+        RelationType finalComparisonRelation;
+
+        // (e_ij < e) ∨ (e_ij = e ∧ (<_ij) 的查找表
+        if (currentRelation == RelationType.LE && newRelation == RelationType.LT) {
+            // 这是唯一的特殊情况：用一个非严格的去满足一个严格的
+            finalComparisonRelation = RelationType.LT; // 比较条件是 e_current < e_new
+        } else {
+            // 其他所有情况，比较条件都是 e_current <= e_new
+            finalComparisonRelation = RelationType.LE;
         }
 
-        // 构造 ParameterConstraint: (currentBound - newBound) finalRelation 0
+        // 构造 ParameterConstraint: (currentBound - newBound) finalComparisonRelation 0
         return ParameterConstraint.of(
-                currentGuard.getUpperBound().subtract(newGuard.getUpperBound()),
+                currentBound.subtract(newBound),
                 LinearExpression.of(Rational.ZERO),
-                finalRelation
+                finalComparisonRelation
         );
     }
 
@@ -384,22 +391,21 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
                             // 如果发生了分裂，当前 PDBM 已经分叉，需要重新从队列中取新的分支进行处理
                             // 此时，当前 PDBM 已经不再是单一的演化路径，所以直接跳出所有循环，让外层 while 循环处理新加入的队列元素
                             // 这种处理方式确保了每次迭代都从一个“稳定”的 (C,D) 开始，并在分裂时立即停止当前路径的探索
-                            break; // 跳出 j 循环
+                            break;
                         }
                     }
                     if (updatedInThisIteration && oracleResult == Z3Oracle.OracleResult.SPLIT) {
-                        break; // 跳出 i 循环
+                        break;
                     }
                 }
                 if (updatedInThisIteration && oracleResult == Z3Oracle.OracleResult.SPLIT) {
-                    break; // 跳出 k 循环
+                    break;
                 }
             }
 
             // 如果在当前迭代中发生了更新（包括分裂），则将更新后的 PDBM 重新加入队列进行下一轮规范化
-            // 如果没有更新，则表示当前 PDBM 在当前 ConstraintSet 下已达到规范形式
             if (updatedInThisIteration) {
-                // 如果发生了分裂，新的分支已经加入队列，当前 PDBM 不再需要加入
+                // 如果发生了分裂，新的分支已经加入队列，当前 PDBM 不加入
                 if (oracleResult != Z3Oracle.OracleResult.SPLIT && oracleResult != Z3Oracle.OracleResult.UNKNOWN) {
                     queue.add(Pair.of(currentC, new PDBM(this.clockList, this.clockIndexMap, tempBoundsMatrix)));
                 }
