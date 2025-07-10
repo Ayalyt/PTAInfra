@@ -135,10 +135,10 @@ public final class AtomicGuard implements Comparable<AtomicGuard>, ToZ3BoolExpr 
     // --- Z3 转换 ---
     @Override
     public BoolExpr toZ3BoolExpr(Context ctx, Z3VariableManager varManager) {
-        if (bound.isCertainlyPositiveInfinity()) {
+        if (getUpperBound().isCertainlyPositiveInfinity()) {
             return ctx.mkTrue();
         }
-        if (bound.isCertainlyNegativeInfinity()) {
+        if (getUpperBound().isCertainlyNegativeInfinity()) {
             return ctx.mkFalse();
         }
 

@@ -4,12 +4,8 @@ import lombok.Getter;
 import org.apache.commons.lang3.tuple.Pair;
 import org.example.automata.base.ResetSet;
 import org.example.core.Clock;
-import org.example.core.Parameter;
-import org.example.expressions.RelationType;
 import org.example.expressions.parameters.ConstraintSet;
-import org.example.expressions.parameters.LinearExpression;
 import org.example.symbolic.Z3Oracle;
-import org.example.utils.Rational;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,7 +15,8 @@ import java.util.stream.Collectors;
 /**
  * 代表受约束的参数化差分界限矩阵 (Constrained Parametric Difference-Bound Matrix, CPDBM)。
  * CPDBM 是一个对 (C, D)，其中 C 是参数约束集合，D 是 PDBM。
- * 不可变。
+ * 此类是不可变的，所有操作都返回新的实例或实例集合。
+ * 这是与模型检测算法交互的主要顶层API。
  */
 @Getter
 public final class CPDBM implements Comparable<CPDBM> {
@@ -28,134 +25,157 @@ public final class CPDBM implements Comparable<CPDBM> {
 
     private final ConstraintSet constraintSet; // C
     private final PDBM pdbm;                   // D
-
     private final int hashCode;
 
     /**
-     * 构造函数。
+     * 私有构造函数，确保通过工厂方法或操作创建实例。
      * @param constraintSet 参数约束集合。
      * @param pdbm PDBM 实例。
      */
-    public CPDBM(ConstraintSet constraintSet, PDBM pdbm) {
+    private CPDBM(ConstraintSet constraintSet, PDBM pdbm) {
         this.constraintSet = Objects.requireNonNull(constraintSet, "ConstraintSet cannot be null.");
         this.pdbm = Objects.requireNonNull(pdbm, "PDBM cannot be null.");
         this.hashCode = Objects.hash(constraintSet, pdbm);
-        logger.info("创建 CPDBM: (C: {}, D: \n{})", constraintSet, pdbm);
+        logger.debug("创建 CPDBM: (C: {})", constraintSet);
+    }
+
+    // --- 静态工厂方法 ---
+
+    /**
+     * 创建一个从无约束参数空间 (TRUE) 开始的初始符号化状态集。
+     * @param allClocks 系统中所有时钟的集合。
+     * @param oracle Z3 Oracle 实例。
+     * @return 一个包含所有可能的、规范化的、非空的初始CPDBM的集合。
+     */
+    public static Set<CPDBM> createInitial(Set<Clock> allClocks, Z3Oracle oracle) {
+        return createInitial(allClocks, ConstraintSet.TRUE_CONSTRAINT_SET, oracle);
     }
 
     /**
+     * @param allClocks 系统中所有时钟的集合。
+     * @param initialC 初始的参数约束集。
+     * @param oracle Z3 Oracle 实例。
+     * @return 一个包含所有可能的、规范化的、非空的初始CPDBM的集合。
+     */
+    public static Set<CPDBM> createInitial(Set<Clock> allClocks, ConstraintSet initialC, Z3Oracle oracle) {
+        logger.info("创建初始 CPDBM 集合，时钟: {}, 初始约束: {}", allClocks, initialC);
+        PDBM initialD = PDBM.createInitial(allClocks);
+        CPDBM tempCpdbm = new CPDBM(initialC, initialD);
+        return tempCpdbm.canonical(oracle);
+    }
+
+    // --- 核心操作 (返回纯粹的结果集，不进行最终过滤) ---
+
+    /**
      * 将指定的 AtomicGuard 合取到当前 CPDBM 中。
-     * 此操作可能导致 CPDBM 分裂，因此返回一个 CPDBM 集合。
-     *
+     * 此操作可能导致 CPDBM 分裂。
      * @param newGuard 要合取的 AtomicGuard。
      * @param oracle Z3 Oracle 实例。
-     * @return 包含一个或多个新 CPDBM 的集合。如果导致不可满足，返回空集合。
+     * @return 包含一个或多个新 CPDBM 的集合。
      */
     public Set<CPDBM> addGuard(AtomicGuard newGuard, Z3Oracle oracle) {
-        logger.info("CPDBM.addGuard: 尝试添加守卫 {} 到\n {}", newGuard, this);
-        var splitResults = this.pdbm.addGuard(newGuard, this.constraintSet, oracle);
+        logger.debug("CPDBM.addGuard: 添加守卫 {} 到\n {}", newGuard, this);
+        // 调用底层的 pdbm.addGuard，它返回 (完整的新C, 更新后的D) 对的集合
+        Collection<Pair<ConstraintSet, PDBM>> pdbmResults = this.pdbm.addGuard(newGuard, this.constraintSet, oracle);
 
-        Set<CPDBM> result = splitResults.stream()
-                            .map(pair -> new CPDBM(this.constraintSet.and(pair.getKey()), pair.getValue()))
-                            .filter(cpdbm -> !cpdbm.isEmpty(oracle))
-                            .collect(Collectors.toSet());
-
-        logger.info("CPDBM.addGuard: 返回 {} 个新 CPDBM。", result.size());
-        return result;
+        // 将 (C, D) 对转换为 CPDBM
+        return pdbmResults.stream()
+                .map(pair -> new CPDBM(pair.getKey(), pair.getValue()))
+                .collect(Collectors.toSet());
     }
 
     /**
      * 将当前 CPDBM 转换为规范形式。
-     * 此操作可能导致 CPDBM 分裂，因此返回一个 CPDBM 集合。
-     *
+     * 此操作可能导致 CPDBM 分裂。
      * @param oracle Z3 Oracle 实例。
-     * @return 包含一个或多个规范化 CPDBM 的集合。如果导致不可满足，返回空集合。
+     * @return 包含一个或多个规范化 CPDBM 的集合。
      */
     public Set<CPDBM> canonical(Z3Oracle oracle) {
-        logger.info("CPDBM.canonical: 规范化 \n{}", this);
-        // 调用 PDBM 内部的 canonical 方法，它会返回 (ConstraintSet, PDBM) 对的列表
+        logger.debug("CPDBM.canonical: 规范化 \n{}", this);
         Collection<Pair<ConstraintSet, PDBM>> pdbmResults = this.pdbm.canonical(this.constraintSet, oracle);
 
-        // 将 PDBM 返回的对转换为 CPDBM 集合
-        Set<CPDBM> canonicalCPDBMs = pdbmResults.stream()
-                .map(pair -> new CPDBM(this.constraintSet.and(pair.getKey()), pair.getValue()))
-                .filter(cpdbm -> !cpdbm.isEmpty(oracle)) // 过滤掉语义为空的 CPDBM
+        return pdbmResults.stream()
+                .map(pair -> new CPDBM(pair.getKey(), pair.getValue()))
                 .collect(Collectors.toSet());
-
-        logger.info("CPDBM.canonical: 返回 {} 个规范化 CPDBM。", canonicalCPDBMs.size());
-        return canonicalCPDBMs;
     }
 
     /**
-     * 应用时间流逝操作到当前 CPDBM。
-     *
+     * 应用时间流逝操作 (D↑) 到当前 CPDBM。
      * @return 应用时间流逝后的新 CPDBM 实例。
      */
     public CPDBM delay() {
-        logger.info("CPDBM.delay: 应用时间流逝到 {}", this);
+        logger.debug("CPDBM.delay: 应用时间流逝到 {}", this);
         PDBM delayedPDBM = this.pdbm.delay();
         return new CPDBM(this.constraintSet, delayedPDBM);
     }
 
     /**
      * 应用时钟重置操作到当前 CPDBM。
-     *
      * @param resetSet 要重置的时钟集合及其值。
      * @return 应用重置后的新 CPDBM 实例。
      */
     public CPDBM reset(ResetSet resetSet) {
-        logger.info("CPDBM.reset: 应用重置 {} 到 \n{}", resetSet, this);
+        logger.debug("CPDBM.reset: 应用重置 {} 到 \n{}", resetSet, this);
         PDBM resetPDBM = this.pdbm.reset(resetSet);
         return new CPDBM(this.constraintSet, resetPDBM);
     }
 
-    // TODO: 功能上没做异常链，此外效率很差。
-    public List<CPDBM> addGuardAndCanonical(AtomicGuard newGuard, Z3Oracle oracle) {
+    // --- 组合操作 ---
 
-        // 添加初始不变式
-        Set<CPDBM> afterInvariantPairs = this.addGuard(
-                newGuard,
-                oracle
-        );
+    /**
+     * @param guard 要添加的守卫。
+     * @param oracle Z3 Oracle 实例。
+     * @return 一个包含所有最终的、规范化的、非空的后继状态的集合。
+     */
+    public Set<CPDBM> addGuardAndCanonical(AtomicGuard guard, Z3Oracle oracle) {
+        logger.debug("CPDBM.addGuardAndCanonical: guard={}, on\n{}", guard, this);
+        Set<CPDBM> finalResults = new HashSet<>();
 
-        // 规范化所有PDBM
-        List<CPDBM> canonicalPairs = new ArrayList<>();
-        for (CPDBM entry : afterInvariantPairs) {
-            Set<CPDBM> canonicalized = entry.canonical(oracle);
-            canonicalPairs.addAll(canonicalized);
+        // 1. 执行 addGuard，得到一个临时的后继状态集
+        Set<CPDBM> afterGuard = this.addGuard(guard, oracle);
+
+        // 2. 对 addGuard 产生的每一个后继状态执行 canonical
+        for (CPDBM cpdbm : afterGuard) {
+            finalResults.addAll(cpdbm.canonical(oracle));
         }
 
-        // 过滤已经不可满足的PDBM
-        canonicalPairs.removeIf(entry -> entry.getConstraintSet().isEmpty() || entry.getPdbm().isEmpty(entry.getConstraintSet(), oracle));
-
-        return canonicalPairs;
+        return finalResults;
     }
 
     /**
-     * 检查此 CPDBM 的语义是否为空 (即 [C, D] 是否为空)。
-     *
+     * @param oracle Z3 Oracle 实例。
+     * @return 一个包含所有最终的、规范化的、非空的后继状态的集合。
+     */
+    public Set<CPDBM> delayAndCanonical(Z3Oracle oracle) {
+        logger.debug("CPDBM.delayAndCanonical: on\n{}", this);
+        return this.delay().canonical(oracle);
+    }
+
+    /**
+     * @param resetSet 要重置的时钟。
+     * @param oracle Z3 Oracle 实例。
+     * @return 一个包含所有最终的、规范化的、非空的后继状态的集合。
+     */
+    public Set<CPDBM> resetAndCanonical(ResetSet resetSet, Z3Oracle oracle) {
+        logger.debug("CPDBM.resetAndCanonical: reset={}, on\n{}", resetSet, this);
+        // reset() 返回单个CPDBM，对其进行canonical即可
+        return this.reset(resetSet).canonical(oracle);
+    }
+
+
+    // --- 状态查询 ---
+
+    /**
+     * 检查此 CPDBM 的语义是否为空。
      * @param oracle Z3 Oracle 实例。
      * @return true 如果语义为空，false 否则。
      */
     public boolean isEmpty(Z3Oracle oracle) {
-        logger.info("CPDBM.isEmpty: 检查 CPDBM \n{} 是否为空。", this);
-        // 检查 ConstraintSet 是否可满足
-        Boolean C_satisfiable = oracle.isSatisfiable(this.constraintSet);
-        if (C_satisfiable == null) { // UNKNOWN
-            logger.warn("CPDBM.isEmpty: ConstraintSet {} 可满足性未知，保守返回 false。", this.constraintSet);
-            return false; // 无法确定，保守返回 false
-        }
-        if (!C_satisfiable) {
-            logger.info("CPDBM.isEmpty: ConstraintSet {} 不可满足，CPDBM 为空。", this.constraintSet);
-            return true; // ConstraintSet 不可满足，则整个 CPDBM 语义为空
-        }
-
-        // 如果 ConstraintSet 可满足，则检查 PDBM 在该 ConstraintSet 下是否可满足
-        // 这一步现在委托给 PDBM 自己的 isEmpty
-        boolean pdbmIsEmpty = this.pdbm.isEmpty(this.constraintSet, oracle);
-        logger.info("CPDBM.isEmpty: PDBM 在 ConstraintSet {} 下是否为空：{}", this.constraintSet, pdbmIsEmpty);
-        return pdbmIsEmpty;
+        logger.debug("CPDBM.isEmpty: 检查 CPDBM 是否为空。C: {}", this.constraintSet);
+        return this.pdbm.isEmpty(this.constraintSet, oracle);
     }
+
+    // --- Object 方法 ---
 
     @Override
     public boolean equals(Object o) {
@@ -171,7 +191,7 @@ public final class CPDBM implements Comparable<CPDBM> {
 
     @Override
     public int hashCode() {
-        return hashCode;
+        return this.hashCode;
     }
 
     @Override
@@ -186,29 +206,5 @@ public final class CPDBM implements Comparable<CPDBM> {
             return cmp;
         }
         return this.pdbm.compareTo(other.pdbm);
-    }
-
-    public static void main(String[] args) {
-        Set<Clock> allClocks = new HashSet<>();
-        Set<Parameter> allParameters = new HashSet<>();
-        for (int i = 0; i < 3; i++) {
-            Clock clock = Clock.createNewClock();
-            allClocks.add(clock);
-        }
-        Clock clock = allClocks.stream().findFirst().get();
-        allClocks.add(Clock.ZERO_CLOCK);
-
-        Z3Oracle oracle = new Z3Oracle(allParameters, allClocks);
-        PDBM pdbm = PDBM.createInitial(allClocks);
-        Collection<Pair<ConstraintSet, PDBM>> pdbmCanonicaled = pdbm.canonical(ConstraintSet.TRUE_CONSTRAINT_SET, oracle);
-        Set<CPDBM> cpdbm = new HashSet<>();
-        for(Pair<ConstraintSet, PDBM> p: pdbmCanonicaled){
-            cpdbm.add(new CPDBM(p.getKey(), p.getValue()));
-        }
-        for(CPDBM c: cpdbm){
-            c.addGuardAndCanonical(AtomicGuard.of(clock, Clock.ZERO_CLOCK, LinearExpression.of(Rational.ONE), RelationType.LE),
-                oracle
-            );
-        }
     }
 }

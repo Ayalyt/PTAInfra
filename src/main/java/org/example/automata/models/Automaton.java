@@ -1,4 +1,4 @@
 package org.example.automata.models;
 
-public interface Automata {
+public interface Automation {
 }

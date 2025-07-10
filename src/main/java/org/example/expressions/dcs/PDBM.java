@@ -6,7 +6,6 @@ import lombok.Getter;
 import org.apache.commons.lang3.tuple.Pair;
 import org.example.automata.base.ResetSet;
 import org.example.core.Clock;
-import org.example.core.Parameter;
 import org.example.expressions.RelationType;
 import org.example.expressions.ToZ3BoolExpr;
 import org.example.expressions.parameters.LinearExpression;
@@ -193,7 +192,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
 
         // 2. 构造 C(D, f) 约束：e_ij (rel_ij AND rel_new) e_new
         // 转换为 ParameterConstraint 形式：(e_ij - e_new) (rel_ij AND rel_new) 0
-        ParameterConstraint comparisonConstraint = createComparisonConstraint(newGuard, i, j);
+        ParameterConstraint comparisonConstraint = createComparisonConstraint(newGuard, boundsMatrix[i][j]);
 
         // 3. Oracle 检查覆盖关系
         Z3Oracle.OracleResult oracleResult = oracle.checkCoverage(comparisonConstraint, currentConstraintSet);
@@ -243,17 +242,51 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
      * 论文中 C(D, f) = e_ij (<ij ⇒ <) e
      * 这里的 AtomicGuard 实例都应是规范化的上界形式 (LT 或 LE)。
      *
-     * @param newGuard 要添加的 AtomicGuard (c_i - c_j ~ E_new)
+     * @param newGuard     要添加的 AtomicGuard (c_i - c_j ~ E_new)
+     * @param currentGuard
      * @return 比较这两个 AtomicGuard 边界的 ParameterConstraint。
      */
-    private ParameterConstraint createComparisonConstraint(AtomicGuard newGuard, Integer i, Integer j) {
-        AtomicGuard currentGuard = boundsMatrix[i][j];
+    private ParameterConstraint createComparisonConstraint(AtomicGuard newGuard, AtomicGuard currentGuard) {
+        LinearExpression currentBound = currentGuard.getUpperBound();
+        LinearExpression newBound = newGuard.getUpperBound();
+
+        // --- 新增的无穷大检查 ---
+
+        boolean isCurrentInf = currentBound.isCertainlyPositiveInfinity();
+        boolean isNewInf = newBound.isCertainlyPositiveInfinity();
+
+        if (isCurrentInf && isNewInf) {
+            // 两个边界都是无穷大。需要返回一个恒真的约束来让Oracle回答YES。
+            // 构造一个 0 <= 0 的约束。
+            return ParameterConstraint.of(
+                    LinearExpression.of(Rational.ZERO),
+                    LinearExpression.of(Rational.ZERO),
+                    RelationType.LE
+            );
+        }
+
+        if (isCurrentInf) { // current 是 ∞, new 是有限值。newGuard 更严格。
+            // 我们需要返回一个恒假的约束来让Oracle回答NO。
+            // 构造一个 1 <= 0 的约束。
+            return ParameterConstraint.of(
+                    LinearExpression.of(Rational.ONE),
+                    LinearExpression.of(Rational.ZERO),
+                    RelationType.LE
+            ); // 结果是 1 <= 0, 恒假
+        }
+
+        if (isNewInf) { // current 是有限值, new 是 ∞。currentGuard 更严格。
+            // 我们需要返回一个恒真的约束来让Oracle回答YES。
+            // 构造一个 0 <= 0 的约束。
+            return ParameterConstraint.of(
+                    LinearExpression.of(Rational.ZERO),
+                    LinearExpression.of(Rational.ZERO),
+                    RelationType.LE
+            ); // 结果是 0 <= 0, 恒真
+        }
 
         RelationType currentRelation = currentGuard.getUpperBoundRelation();
-        LinearExpression currentBound = currentGuard.getUpperBound();
-
         RelationType newRelation = newGuard.getUpperBoundRelation();
-        LinearExpression newBound = newGuard.getUpperBound();
 
         RelationType finalComparisonRelation;
 
@@ -339,11 +372,7 @@ public final class PDBM implements Comparable<PDBM>, ToZ3BoolExpr {
 
                         // 比较当前边界 Dij 和潜在的新边界 potentialNewGuard
                         // C(D, f) = Dij (Dij.relation AND potentialNewGuard.relation) potentialNewGuard
-                        ParameterConstraint comparisonConstraint = ParameterConstraint.of(
-                                Dij.getUpperBound(),
-                                potentialNewGuard.getUpperBound(),
-                                Dij.getUpperBoundRelation().and(potentialNewGuard.getUpperBoundRelation())
-                        );
+                        ParameterConstraint comparisonConstraint = createComparisonConstraint(potentialNewGuard, Dij);
 
                         oracleResult = oracle.checkCoverage(comparisonConstraint, currentC);
 
