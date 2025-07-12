@@ -126,8 +126,6 @@ public final class PTA implements Automaton {
             // 2. 应用重置和时间流逝
             Set<CPDBM> afterResetAndDelay = new HashSet<>();
             for (CPDBM cpdbm : currentCPDBMs) {
-                // resetAndCanonical 和 delayAndCanonical 封装了操作和规范化
-                // 为了效率，可以先 reset, 再 delay, 最后统一 canonical
                 CPDBM afterReset = cpdbm.reset(transition.getResetSet());
                 CPDBM afterDelay = afterReset.delay();
                 afterResetAndDelay.add(afterDelay);
